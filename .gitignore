@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment variables (NEVER commit secrets!)
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+.next/
+.turbo/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+lerna-debug.log*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+.turbo/
+.cache/
+.eslintcache
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride

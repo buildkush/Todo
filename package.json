@@ -1,0 +1,22 @@
+{
+  "name": "todo-app",
+  "version": "1.0.0",
+  "description": "Full-stack hierarchical todo management app with List and Board views",
+  "private": true,
+  "workspaces": [
+    "apps/frontend",
+    "apps/backend",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev": "npm -w @todo/frontend run dev & npm -w @todo/backend run dev",
+    "build": "npm -w @todo/frontend run build && npm -w @todo/backend run build",
+    "lint": "npm -w @todo/frontend run lint && npm -w @todo/backend run lint",
+    "test": "npm -w @todo/frontend run test && npm -w @todo/backend run test",
+    "type-check": "npm -w @todo/frontend run type-check && npm -w @todo/backend run type-check"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}
