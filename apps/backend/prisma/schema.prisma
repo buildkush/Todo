@@ -1,0 +1,141 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 String    @id @default(uuid())
+  email              String    @unique
+  passwordHash       String?
+  name               String?
+  theme              String?   @default("light")
+  language           String?   @default("en-US")
+  defaultProjectView String?   @default("list")
+  
+  projects           Project[]
+  todos              Todo[]
+  sections           Section[]
+  boardSections      BoardSection[]
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  @@index([createdAt(sort: Desc)])
+}
+
+model Project {
+  id                           String    @id @default(uuid())
+  userId                       String
+  user                         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  name                         String
+  description                  String?
+  viewType                     String    // "list" | "board"
+  status                       String?   @default("active")
+  color                        String?
+  icon                         String?
+  
+  defaultSortOrder             String?   @default("manual")
+  showCompletedTodos           Boolean   @default(true)
+  allowDragDropBetweenSections Boolean   @default(true)
+
+  sections                     Section[]
+  boardSections                BoardSection[]
+  todos                        Todo[]
+
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+  deletedAt                    DateTime?
+
+  @@index([userId, deletedAt])
+  @@index([createdAt(sort: Desc)])
+}
+
+model Todo {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  projectId      String?
+  project        Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  sectionId      String?
+  section        Section?  @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  
+  boardSectionId String?
+  boardSection   BoardSection? @relation(fields: [boardSectionId], references: [id], onDelete: Cascade)
+  
+  title          String
+  description    String?
+  isCompleted    Boolean   @default(false)
+  order          Int       // Position within parent
+  
+  dueDate        DateTime?
+  priority       String?   // "low" | "medium" | "high"
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  completedAt    DateTime?
+  deletedAt      DateTime?
+
+  @@index([userId, deletedAt])
+  @@index([projectId, sectionId, order, deletedAt])
+  @@index([projectId, boardSectionId, order, deletedAt])
+  @@index([isCompleted, userId, deletedAt])
+}
+
+model Section {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  name        String
+  description String?
+  order       Int
+  isCollapsed Boolean   @default(false)
+  color       String?
+
+  todos       Todo[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([projectId, order, deletedAt])
+  @@index([userId, deletedAt])
+}
+
+model BoardSection {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  name        String
+  description String?
+  order       Int
+  color       String?
+  wip         Int?      // Work-in-progress limit
+
+  todos       Todo[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([projectId, order, deletedAt])
+  @@index([userId, deletedAt])
+}
