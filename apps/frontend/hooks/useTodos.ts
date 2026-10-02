@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { apiClient, Todo, Section, BoardSection, type ApiResponse } from '@/lib/api-client';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { apiClient, Todo, Section, BoardSection } from '@/lib/api-client';
 
 interface UseTodosResult {
     todos: Todo[];
@@ -16,68 +16,267 @@ interface UseTodosResult {
 }
 
 export function useTodos(projectId: string): UseTodosResult {
-    const [todos, setTodos] = useState<Todo[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const [todoSnapshot, setTodoSnapshot] = useState<{ projectId: string; todos: Todo[] }>({ projectId, todos: [] });
+    const [loadingSnapshot, setLoadingSnapshot] = useState<{ projectId: string; loading: boolean }>({ projectId, loading: true });
+    const [errorSnapshot, setErrorSnapshot] = useState<{ projectId: string; error: string | null }>({ projectId, error: null });
+    const fetchVersion = useRef(0);
+    const dataVersions = useRef(new Map<string, number>());
+    const mutationVersions = useRef(new Map<string, number>());
+    const mutationQueues = useRef(new Map<string, Promise<void>>());
+
+    const todos = todoSnapshot.projectId === projectId ? todoSnapshot.todos : [];
+    const loading = loadingSnapshot.projectId !== projectId || loadingSnapshot.loading;
+    const error = errorSnapshot.projectId === projectId ? errorSnapshot.error : null;
+
+    const updateTodos = useCallback((updater: (current: Todo[]) => Todo[]) => {
+        setTodoSnapshot(previous => ({
+            projectId,
+            todos: updater(previous.projectId === projectId ? previous.todos : []),
+        }));
+    }, [projectId]);
 
     const fetchTodos = useCallback(async () => {
+        const requestVersion = ++fetchVersion.current;
+        const dataVersion = dataVersions.current.get(projectId) || 0;
         try {
-            setLoading(true);
-            setError(null);
+            setLoadingSnapshot({ projectId, loading: true });
+            setErrorSnapshot({ projectId, error: null });
             const response = await apiClient.getTodos(projectId);
-            setTodos(response.data || []);
+            if (requestVersion === fetchVersion.current && dataVersions.current.get(projectId) === dataVersion) {
+                setTodoSnapshot({ projectId, todos: response.data || [] });
+            }
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to fetch todos');
-            setTodos([]);
+            if (requestVersion === fetchVersion.current && dataVersions.current.get(projectId) === dataVersion) {
+                setErrorSnapshot({ projectId, error: err instanceof Error ? err.message : 'Failed to fetch todos' });
+                setTodoSnapshot({ projectId, todos: [] });
+            }
         } finally {
-            setLoading(false);
+            if (requestVersion === fetchVersion.current) {
+                setLoadingSnapshot({ projectId, loading: false });
+            }
         }
     }, [projectId]);
 
     useEffect(() => {
         fetchTodos();
+        return () => {
+            fetchVersion.current++;
+        };
     }, [fetchTodos]);
 
+    useEffect(() => {
+        const belongsHere = (todo: Todo) => projectId === 'none'
+            ? (!todo.projectId || todo.projectId === 'none')
+            : todo.projectId === projectId;
+
+        const handleTodoCreated = (event: Event) => {
+            const detail = (event as CustomEvent<{ todo: Todo; temporaryId?: string }>).detail;
+            if (!detail?.todo || !belongsHere(detail.todo)) return;
+            dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+            updateTodos(current => {
+                const replacingId = detail.temporaryId;
+                if (replacingId && current.some(todo => todo.id === replacingId)) {
+                    return current.map(todo => todo.id === replacingId ? detail.todo : todo);
+                }
+                return current.some(todo => todo.id === detail.todo.id)
+                    ? current
+                    : [...current, detail.todo];
+            });
+        };
+
+        const handleTodoCreateFailed = (event: Event) => {
+            const detail = (event as CustomEvent<{ temporaryId: string }>).detail;
+            if (detail?.temporaryId) {
+                dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+                updateTodos(current => current.filter(todo => todo.id !== detail.temporaryId));
+                void fetchTodos();
+            }
+        };
+
+        window.addEventListener('todo-created', handleTodoCreated);
+        window.addEventListener('todo-create-failed', handleTodoCreateFailed);
+        return () => {
+            window.removeEventListener('todo-created', handleTodoCreated);
+            window.removeEventListener('todo-create-failed', handleTodoCreateFailed);
+        };
+    }, [fetchTodos, projectId, updateTodos]);
+
+    const reconcileTodo = useCallback(async (todoId: string) => {
+        try {
+            const response = await apiClient.getTodo(todoId);
+            if (!response.data) throw new Error('The server did not return the current task');
+            const currentTodo = response.data;
+            const belongsHere = projectId === 'none'
+                ? (!currentTodo.projectId || currentTodo.projectId === 'none')
+                : currentTodo.projectId === projectId;
+            updateTodos(current => {
+                if (!belongsHere) return current.filter(todo => todo.id !== todoId);
+                return current.some(todo => todo.id === todoId)
+                    ? current.map(todo => todo.id === todoId ? currentTodo : todo)
+                    : [...current, currentTodo];
+            });
+        } catch (todoError) {
+            try {
+                const response = await apiClient.getTodos(projectId);
+                if (!response.data) throw new Error('The server did not return the current task list');
+                updateTodos(() => response.data || []);
+            } catch (listError) {
+                const todoMessage = todoError instanceof Error ? todoError.message : 'Failed to fetch the task';
+                const listMessage = listError instanceof Error ? listError.message : 'Failed to fetch the task list';
+                throw new Error(`${todoMessage}; task-list reconciliation also failed: ${listMessage}`);
+            }
+        }
+    }, [projectId, updateTodos]);
+
     const addTodo = useCallback(async (title: string, sectionId?: string, boardSectionId?: string): Promise<Todo> => {
+        dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+        const id = `optimistic-todo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const now = new Date().toISOString();
+        const project = apiClient.getCurrentUser();
+        const optimisticTodo: Todo = {
+            id,
+            userId: project?.id || '',
+            projectId: projectId === 'none' ? 'none' : projectId,
+            sectionId,
+            boardSectionId,
+            title,
+            isCompleted: false,
+            order: todos.length,
+            createdAt: now,
+            updatedAt: now,
+            deletedAt: null,
+        };
+        updateTodos(current => [...current, optimisticTodo]);
+
         try {
             const response = await apiClient.createTodo(title, projectId, sectionId, { boardSectionId });
-            const newTodo = response.data!;
-            setTodos(prev => [...prev, newTodo]);
+            if (!response.data) throw new Error('The server did not return the created task');
+            const newTodo = response.data;
+            dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+            updateTodos(current => current.some(todo => todo.id === id)
+                ? current.map(todo => todo.id === id ? newTodo : todo)
+                : current.some(todo => todo.id === newTodo.id) ? current : [...current, newTodo]);
             return newTodo;
         } catch (err) {
+            dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+            updateTodos(current => current.filter(todo => todo.id !== id));
+            await fetchTodos();
             throw err instanceof Error ? err : new Error('Failed to create todo');
         }
-    }, [projectId]);
+    }, [fetchTodos, projectId, todos.length, updateTodos]);
 
     const updateTodo = useCallback(async (todoId: string, updates: Partial<Todo>): Promise<Todo> => {
+        const previous = todos.find(todo => todo.id === todoId);
+        if (!previous) throw new Error('Todo not found');
+
+        dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+        const version = (mutationVersions.current.get(todoId) || 0) + 1;
+        mutationVersions.current.set(todoId, version);
+        const optimistic = { ...previous, ...updates };
+        const belongsHere = (todo: Todo) => projectId === 'none'
+            ? (!todo.projectId || todo.projectId === 'none')
+            : todo.projectId === projectId;
+
+        updateTodos(current => belongsHere(optimistic)
+            ? current.map(todo => todo.id === todoId ? optimistic : todo)
+            : current.filter(todo => todo.id !== todoId));
+
+        const previousRequest = mutationQueues.current.get(todoId) || Promise.resolve();
+        const request = previousRequest
+            .catch(() => undefined)
+            .then(() => apiClient.updateTodo(todoId, updates));
+        const queuedRequest = request.then(() => undefined, () => undefined);
+        mutationQueues.current.set(todoId, queuedRequest);
+
         try {
-            const response = await apiClient.updateTodo(todoId, updates);
-            const updated = response.data!;
-            // Check if the task still belongs to this view
-            const belongsHere = projectId === 'none'
-                ? (!updated.projectId || updated.projectId === null || updated.projectId === 'none')
-                : updated.projectId === projectId;
-            console.log("updateTodo belongsHere check:", { projectId, updatedProjectId: updated.projectId, belongsHere });
-            if (!belongsHere) {
-                // Task moved to a different project/inbox — remove from current view
-                setTodos(prev => prev.filter(t => t.id !== todoId));
-            } else {
-                setTodos(prev => prev.map(t => t.id === todoId ? updated : t));
+            const response = await request;
+            if (!response.data) throw new Error('The server did not return the updated task');
+            const updated = response.data;
+            if (mutationVersions.current.get(todoId) === version) {
+                updateTodos(current => belongsHere(updated)
+                    ? current.map(todo => todo.id === todoId ? updated : todo)
+                    : current.filter(todo => todo.id !== todoId));
             }
             return updated;
         } catch (err) {
+            if (mutationVersions.current.get(todoId) === version) {
+                updateTodos(current => {
+                    const currentTodo = current.find(todo => todo.id === todoId);
+                    if (!currentTodo) {
+                        return belongsHere(previous) ? [...current, previous] : current;
+                    }
+                    const rolledBack = { ...currentTodo };
+                    for (const key of Object.keys(updates) as Array<keyof Todo>) {
+                        if (currentTodo[key] === optimistic[key]) {
+                            (rolledBack[key] as Todo[keyof Todo]) = previous[key] as Todo[keyof Todo];
+                        }
+                    }
+                    return belongsHere(rolledBack)
+                        ? current.map(todo => todo.id === todoId ? rolledBack : todo)
+                        : current.filter(todo => todo.id !== todoId);
+                });
+            }
+            try {
+                await reconcileTodo(todoId);
+            } catch (reconcileError) {
+                const message = err instanceof Error ? err.message : 'Failed to update todo';
+                const reconciliationMessage = reconcileError instanceof Error
+                    ? reconcileError.message
+                    : 'Failed to verify task state';
+                throw new Error(`${message}. Could not verify the task state: ${reconciliationMessage}`);
+            }
             throw err instanceof Error ? err : new Error('Failed to update todo');
+        } finally {
+            dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+            if (mutationVersions.current.get(todoId) === version) {
+                mutationVersions.current.delete(todoId);
+            }
+            if (mutationQueues.current.get(todoId) === queuedRequest) {
+                mutationQueues.current.delete(todoId);
+            }
         }
-    }, [projectId]);
+    }, [projectId, reconcileTodo, todos, updateTodos]);
 
     const deleteTodo = useCallback(async (todoId: string): Promise<void> => {
+        const previous = todos.find(todo => todo.id === todoId);
+        if (!previous) return;
+        dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+        const version = (mutationVersions.current.get(todoId) || 0) + 1;
+        mutationVersions.current.set(todoId, version);
+        updateTodos(current => current.filter(todo => todo.id !== todoId));
+        const previousRequest = mutationQueues.current.get(todoId) || Promise.resolve();
+        const request = previousRequest
+            .catch(() => undefined)
+            .then(() => apiClient.deleteTodo(todoId));
+        const queuedRequest = request.then(() => undefined, () => undefined);
+        mutationQueues.current.set(todoId, queuedRequest);
+
         try {
-            await apiClient.deleteTodo(todoId);
-            setTodos(prev => prev.filter(t => t.id !== todoId));
+            await request;
         } catch (err) {
+            if (mutationVersions.current.get(todoId) === version) {
+                updateTodos(current => current.some(todo => todo.id === todoId) ? current : [...current, previous]);
+            }
+            try {
+                await reconcileTodo(todoId);
+            } catch (reconcileError) {
+                const message = err instanceof Error ? err.message : 'Failed to delete todo';
+                const reconciliationMessage = reconcileError instanceof Error
+                    ? reconcileError.message
+                    : 'Failed to verify task state';
+                throw new Error(`${message}. Could not verify the task state: ${reconciliationMessage}`);
+            }
             throw err instanceof Error ? err : new Error('Failed to delete todo');
+        } finally {
+            dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+            if (mutationVersions.current.get(todoId) === version) {
+                mutationVersions.current.delete(todoId);
+            }
+            if (mutationQueues.current.get(todoId) === queuedRequest) {
+                mutationQueues.current.delete(todoId);
+            }
         }
-    }, []);
+    }, [projectId, reconcileTodo, todos, updateTodos]);
 
     const toggleTodo = useCallback(async (todoId: string): Promise<Todo> => {
         const todo = todos.find(t => t.id === todoId);
@@ -86,15 +285,68 @@ export function useTodos(projectId: string): UseTodosResult {
     }, [todos, updateTodo]);
 
     const moveTodo = useCallback(async (todoId: string, sectionId?: string, boardSectionId?: string, order?: number, targetProjectId?: string): Promise<Todo> => {
+        const previous = todos.find(todo => todo.id === todoId);
+        if (!previous) throw new Error('Todo not found');
+        dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+        const version = (mutationVersions.current.get(todoId) || 0) + 1;
+        mutationVersions.current.set(todoId, version);
+        const optimistic: Todo = {
+            ...previous,
+            sectionId: sectionId === 'unsectioned' ? undefined : sectionId,
+            boardSectionId,
+            order: order ?? previous.order,
+            projectId: targetProjectId ?? previous.projectId,
+        };
+        const belongsHere = (todo: Todo) => projectId === 'none'
+            ? (!todo.projectId || todo.projectId === 'none')
+            : todo.projectId === projectId;
+        updateTodos(current => belongsHere(optimistic)
+            ? current.map(todo => todo.id === todoId ? optimistic : todo)
+            : current.filter(todo => todo.id !== todoId));
+
+        const previousRequest = mutationQueues.current.get(todoId) || Promise.resolve();
+        const request = previousRequest
+            .catch(() => undefined)
+            .then(() => apiClient.moveTodo(todoId, sectionId, boardSectionId, order, targetProjectId));
+        const queuedRequest = request.then(() => undefined, () => undefined);
+        mutationQueues.current.set(todoId, queuedRequest);
+
         try {
-            const response = await apiClient.moveTodo(todoId, sectionId, boardSectionId, order, targetProjectId);
-            const moved = response.data!;
-            setTodos(prev => prev.map(t => t.id === todoId ? moved : t));
+            const response = await request;
+            if (!response.data) throw new Error('The server did not return the moved task');
+            const moved = response.data;
+            if (mutationVersions.current.get(todoId) === version) {
+                updateTodos(current => belongsHere(moved)
+                    ? current.map(todo => todo.id === todoId ? moved : todo)
+                    : current.filter(todo => todo.id !== todoId));
+            }
             return moved;
         } catch (err) {
+            if (mutationVersions.current.get(todoId) === version) {
+                updateTodos(current => belongsHere(previous)
+                    ? current.map(todo => todo.id === todoId ? previous : todo)
+                    : current.filter(todo => todo.id !== todoId));
+            }
+            try {
+                await reconcileTodo(todoId);
+            } catch (reconcileError) {
+                const message = err instanceof Error ? err.message : 'Failed to move todo';
+                const reconciliationMessage = reconcileError instanceof Error
+                    ? reconcileError.message
+                    : 'Failed to verify task state';
+                throw new Error(`${message}. Could not verify the task state: ${reconciliationMessage}`);
+            }
             throw err instanceof Error ? err : new Error('Failed to move todo');
+        } finally {
+            dataVersions.current.set(projectId, (dataVersions.current.get(projectId) || 0) + 1);
+            if (mutationVersions.current.get(todoId) === version) {
+                mutationVersions.current.delete(todoId);
+            }
+            if (mutationQueues.current.get(todoId) === queuedRequest) {
+                mutationQueues.current.delete(todoId);
+            }
         }
-    }, []);
+    }, [projectId, reconcileTodo, todos, updateTodos]);
 
     return {
         todos,
@@ -122,62 +374,84 @@ interface UseSectionsResult {
 }
 
 export function useSections(projectId: string): UseSectionsResult {
-    const [sections, setSections] = useState<Section[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const [sectionSnapshot, setSectionSnapshot] = useState<{ projectId: string; sections: Section[] }>({ projectId, sections: [] });
+    const [loadingSnapshot, setLoadingSnapshot] = useState<{ projectId: string; loading: boolean }>({ projectId, loading: true });
+    const [errorSnapshot, setErrorSnapshot] = useState<{ projectId: string; error: string | null }>({ projectId, error: null });
+    const fetchVersion = useRef(0);
+
+    const sections = sectionSnapshot.projectId === projectId ? sectionSnapshot.sections : [];
+    const loading = loadingSnapshot.projectId !== projectId || loadingSnapshot.loading;
+    const error = errorSnapshot.projectId === projectId ? errorSnapshot.error : null;
+
+    const updateSections = useCallback((updater: (current: Section[]) => Section[]) => {
+        setSectionSnapshot(previous => ({
+            projectId,
+            sections: updater(previous.projectId === projectId ? previous.sections : []),
+        }));
+    }, [projectId]);
 
     const fetchSections = useCallback(async () => {
+        const requestVersion = ++fetchVersion.current;
         try {
-            setLoading(true);
-            setError(null);
+            setLoadingSnapshot({ projectId, loading: true });
+            setErrorSnapshot({ projectId, error: null });
             const response = await apiClient.getSections(projectId);
-            setSections(response.data || []);
+            if (requestVersion === fetchVersion.current) {
+                setSectionSnapshot({ projectId, sections: response.data || [] });
+            }
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to fetch sections');
-            setSections([]);
+            if (requestVersion === fetchVersion.current) {
+                setErrorSnapshot({ projectId, error: err instanceof Error ? err.message : 'Failed to fetch sections' });
+                setSectionSnapshot({ projectId, sections: [] });
+            }
         } finally {
-            setLoading(false);
+            if (requestVersion === fetchVersion.current) {
+                setLoadingSnapshot({ projectId, loading: false });
+            }
         }
     }, [projectId]);
 
     useEffect(() => {
         fetchSections();
+        return () => {
+            fetchVersion.current++;
+        };
     }, [fetchSections]);
 
     const addSection = useCallback(async (name: string, description?: string): Promise<Section> => {
         try {
             const response = await apiClient.createSection(projectId, name, description);
             const newSection = response.data!;
-            setSections(prev => [...prev, newSection]);
+            updateSections(prev => [...prev, newSection]);
             return newSection;
         } catch (err) {
             throw err instanceof Error ? err : new Error('Failed to create section');
         }
-    }, [projectId]);
+    }, [projectId, updateSections]);
 
     const updateSection = useCallback(async (sectionId: string, updates: Partial<Section>): Promise<Section> => {
         try {
             const response = await apiClient.updateSection(sectionId, updates);
             const updated = response.data!;
-            setSections(prev => prev.map(s => s.id === sectionId ? updated : s));
+            updateSections(prev => prev.map(s => s.id === sectionId ? updated : s));
             return updated;
         } catch (err) {
             throw err instanceof Error ? err : new Error('Failed to update section');
         }
-    }, []);
+    }, [projectId, updateSections]);
 
     const deleteSection = useCallback(async (sectionId: string): Promise<void> => {
         try {
             await apiClient.deleteSection(sectionId);
-            setSections(prev => prev.filter(s => s.id !== sectionId));
+            updateSections(prev => prev.filter(s => s.id !== sectionId));
         } catch (err) {
             throw err instanceof Error ? err : new Error('Failed to delete section');
         }
-    }, []);
+    }, [projectId, updateSections]);
 
     const reorderSections = useCallback(async (reorderPayload: Array<{ id: string; order: number }>): Promise<void> => {
-        // Optimistically update local state with new orders and sort
-        setSections(prev => {
+        const previous = sections;
+        updateSections(prev => {
             const updated = prev.map(s => {
                 const match = reorderPayload.find(p => p.id === s.id);
                 return match ? { ...s, order: match.order } : s;
@@ -186,17 +460,13 @@ export function useSections(projectId: string): UseSectionsResult {
         });
 
         try {
-            await apiClient.reorderSections(reorderPayload);
-            // Fetch the authoritative order from DB to ensure sync
-            const response = await apiClient.getSections(projectId);
-            setSections(response.data || []);
+            const response = await apiClient.reorderSections(reorderPayload);
+            if (response.data) updateSections(() => response.data!);
         } catch (err) {
-            // Re-fetch database state to roll back optimistic update on error
-            const response = await apiClient.getSections(projectId);
-            setSections(response.data || []);
+            updateSections(() => previous);
             throw err;
         }
-    }, [projectId]);
+    }, [projectId, sections, updateSections]);
 
     return {
         sections,

@@ -14,7 +14,6 @@ interface BoardViewProps {
     updateTodo: (id: string, updates: Partial<Todo>) => Promise<Todo>;
     deleteTodo: (id: string) => Promise<void>;
     moveTodo: (todoId: string, sectionId?: string, boardSectionId?: string, order?: number, targetProjectId?: string) => Promise<Todo>;
-    refetchTodos: () => Promise<void>;
     addSection: (name: string) => Promise<Section>;
     reorderSections: (reorderPayload: Array<{ id: string; order: number }>) => Promise<void>;
     openCreateTodoModal: (projectId: string, sectionId?: string) => void;
@@ -29,7 +28,6 @@ export default function BoardView({
     updateTodo,
     deleteTodo,
     moveTodo,
-    refetchTodos,
     addSection,
     reorderSections,
     openCreateTodoModal,
@@ -214,7 +212,6 @@ export default function BoardView({
         try {
             const sectionIdParam = newSectionId === null ? 'unsectioned' : newSectionId;
             await moveTodo(draggedTodoId, sectionIdParam, undefined, newOrder);
-            await refetchTodos();
         } catch (err) {
             setFormError(err instanceof Error ? err.message : 'Failed to move task');
         }
@@ -322,13 +319,14 @@ export default function BoardView({
                         const { total, completed } = getSubtaskCount(todo.id);
                         const isDropTarget = todoDropTarget?.todoId === todo.id;
                         const isDragging = draggedTodoId === todo.id;
+                        const isPending = todo.id.startsWith('optimistic-todo-');
 
                         return (
                             <div key={todo.id} className="relative todo-card">
                                 {isDropTarget && todoDropTarget.position === 'before' && renderPlaceholderCard(draggedTodoId)}
                                 
                                 <div
-                                    draggable
+                                    draggable={!isPending}
                                     onDragStart={(e) => handleTodoDragStart(e, todo.id)}
                                     onDragEnd={(e) => {
                                         if (e.currentTarget instanceof HTMLElement) {
@@ -342,9 +340,12 @@ export default function BoardView({
                                 >
                                     <div className="flex items-start gap-3">
                                         <button 
+                                            disabled={isPending}
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                updateTodo(todo.id, { isCompleted: !todo.isCompleted });
+                                                updateTodo(todo.id, { isCompleted: !todo.isCompleted }).catch(err => {
+                                                    setFormError(err instanceof Error ? err.message : 'Failed to update task');
+                                                });
                                             }}
                                             className={`mt-0.5 flex-shrink-0 transition-colors ${todo.isCompleted ? 'text-green-500' : 'text-gray-350 hover:text-green-500'}`}
                                         >

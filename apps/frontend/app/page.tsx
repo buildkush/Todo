@@ -6,7 +6,7 @@ import { TodoItem, DropPosition } from '@/components/TodoItem';
 import { useTodos } from '@/hooks/useTodos';
 import { useSections } from '@/hooks/useTodos';
 import { useApp } from '@/context/AppContext';
-import { apiClient, Todo, Section } from '@/lib/api-client';
+import { Todo, Section } from '@/lib/api-client';
 import { Plus, MoreHorizontal, ChevronDown, ChevronRight, GripVertical } from 'lucide-react';
 
 const MAX_TODO_DEPTH = 4; // 0-indexed, so 5 visible nesting levels.
@@ -50,8 +50,8 @@ function EmptyInboxIllustration() {
 
 export default function Home() {
     const projectId = 'none'; // Represent Inbox
-    const { todos, loading: todosLoading, updateTodo, deleteTodo, refetch, toggleTodo } = useTodos(projectId);
-    const { sections, addSection, updateSection, deleteSection, reorderSections, refetch: refetchSections } = useSections(projectId);
+    const { todos, loading: todosLoading, updateTodo, deleteTodo, toggleTodo } = useTodos(projectId);
+    const { sections, addSection, updateSection, deleteSection, reorderSections } = useSections(projectId);
     const { openCreateTodoModal } = useApp();
 
     const [activeSection, setActiveSection] = useState<string | null>(null);
@@ -177,12 +177,6 @@ export default function Home() {
         }
         return curr || null;
     }, [todos, getTodoDepth]);
-
-    useEffect(() => {
-        const handleTodoCreated = () => refetch();
-        window.addEventListener('todo-created', handleTodoCreated);
-        return () => window.removeEventListener('todo-created', handleTodoCreated);
-    }, [refetch]);
 
     // Clean up drag state
     useEffect(() => {
@@ -396,8 +390,16 @@ export default function Home() {
         setCollapsedSections(newCollapsed);
         if (sectionId === 'unsectioned') return;
         try {
-            await apiClient.updateSection(sectionId, { isCollapsed: isNowCollapsed } as any);
-        } catch { /* ignore */ }
+            await updateSection(sectionId, { isCollapsed: isNowCollapsed });
+        } catch (err) {
+            setCollapsedSections(current => {
+                const rolledBack = new Set(current);
+                if (isNowCollapsed) rolledBack.delete(sectionId);
+                else rolledBack.add(sectionId);
+                return rolledBack;
+            });
+            setFormError(err instanceof Error ? err.message : 'Failed to update section');
+        }
     };
 
     const scrollToSection = (sectionId: string) => {
@@ -560,7 +562,6 @@ export default function Home() {
                 parentTodoId: null,
                 order: newOrder,
             } as any);
-            await refetch();
         } catch (err) {
             setFormError(err instanceof Error ? err.message : 'Failed to move task');
         }
@@ -640,8 +641,6 @@ export default function Home() {
                 sectionId: sectionId,
                 order: insertIdx,
             } as any);
-
-            await refetch();
         } catch (err) {
             setFormError(err instanceof Error ? err.message : 'Failed to move task');
         }
@@ -760,7 +759,9 @@ export default function Home() {
                     todo={todo}
                     onUpdate={handleUpdateTodo}
                     onDelete={handleDeleteTodo}
-                    onToggle={(id) => toggleTodo(id)}
+                    onToggle={(id) => {
+                        toggleTodo(id).catch(err => setFormError(err instanceof Error ? err.message : 'Failed to update task'));
+                    }}
                     hasChildren={children.length > 0}
                     isCollapsed={isCollapsed}
                     onToggleCollapse={() => toggleTodoCollapse(todo.id)}

@@ -8,7 +8,7 @@ import { useProject } from '@/hooks/useProjectsHook';
 import { useTodos } from '@/hooks/useTodos';
 import { useSections } from '@/hooks/useTodos';
 import { useApp } from '@/context/AppContext';
-import { apiClient, Todo, Section } from '@/lib/api-client';
+import { Todo, Section } from '@/lib/api-client';
 import { ArrowLeft, Plus, MoreHorizontal, ChevronDown, ChevronRight, GripVertical } from 'lucide-react';
 import Link from 'next/link';
 import BoardView from './BoardView';
@@ -37,9 +37,9 @@ type TodoDropTarget = {
 export default function ProjectPage({ params }: ProjectPageProps) {
     const { projectId } = use(params);
     const router = useRouter();
-    const { project, loading: projectLoading, error: projectError, refetch: refetchProject } = useProject(projectId);
-    const { todos, loading: todosLoading, addTodo, updateTodo, deleteTodo, toggleTodo, refetch, moveTodo } = useTodos(projectId);
-    const { sections, loading: sectionsLoading, addSection, updateSection, deleteSection, reorderSections, refetch: refetchSections } = useSections(projectId);
+    const { project, loading: projectLoading, error: projectError, updateProject } = useProject(projectId);
+    const { todos, loading: todosLoading, addTodo, updateTodo, deleteTodo, toggleTodo, moveTodo } = useTodos(projectId);
+    const { sections, loading: sectionsLoading, addSection, updateSection, deleteSection, reorderSections } = useSections(projectId);
     const { openCreateTodoModal } = useApp();
 
     const [activeSection, setActiveSection] = useState<string | null>(null);
@@ -49,8 +49,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
 
     const handleToggleView = async (newView: 'list' | 'board') => {
         try {
-            await apiClient.updateProject(projectId, { viewType: newView });
-            await refetchProject();
+            await updateProject({ viewType: newView });
         } catch (err) {
             setFormError(err instanceof Error ? err.message : 'Failed to switch view');
         }
@@ -186,12 +185,6 @@ export default function ProjectPage({ params }: ProjectPageProps) {
         }
         return curr || null;
     }, [todos, getTodoDepth]);
-
-    useEffect(() => {
-        const handleTodoCreated = () => refetch();
-        window.addEventListener('todo-created', handleTodoCreated);
-        return () => window.removeEventListener('todo-created', handleTodoCreated);
-    }, [refetch]);
 
     // Clean up drag state when any drag ends, drops, or is cancelled
     useEffect(() => {
@@ -422,8 +415,16 @@ export default function ProjectPage({ params }: ProjectPageProps) {
         setCollapsedSections(newCollapsed);
         if (sectionId === 'unsectioned') return;
         try {
-            await apiClient.updateSection(sectionId, { isCollapsed: isNowCollapsed } as any);
-        } catch { /* ignore */ }
+            await updateSection(sectionId, { isCollapsed: isNowCollapsed });
+        } catch (err) {
+            setCollapsedSections(current => {
+                const rolledBack = new Set(current);
+                if (isNowCollapsed) rolledBack.delete(sectionId);
+                else rolledBack.add(sectionId);
+                return rolledBack;
+            });
+            setFormError(err instanceof Error ? err.message : 'Failed to update section');
+        }
     };
 
     const scrollToSection = (sectionId: string) => {
@@ -521,9 +522,8 @@ export default function ProjectPage({ params }: ProjectPageProps) {
     const handleEditProject = async () => {
         if (!projectNameInput.trim()) { setEditingProjectName(false); return; }
         try {
-            await apiClient.updateProject(project!.id, { name: projectNameInput });
+            await updateProject({ name: projectNameInput });
             setEditingProjectName(false);
-            if (refetchProject) refetchProject();
         } catch (err) {
             setFormError(err instanceof Error ? err.message : 'Failed to update project');
         }
@@ -634,7 +634,6 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                 parentTodoId: null,
                 order: newOrder,
             } as any);
-            await refetch();
         } catch (err) {
             setFormError(err instanceof Error ? err.message : 'Failed to move task');
         }
@@ -723,9 +722,6 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                 sectionId: sectionId,
                 order: insertIdx,
             } as any);
-
-            // Refetch to get updated order and relations from server
-            await refetch();
         } catch (err) {
             setFormError(err instanceof Error ? err.message : 'Failed to move task');
         }
@@ -849,7 +845,9 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                     todo={todo}
                     onUpdate={handleUpdateTodo}
                     onDelete={handleDeleteTodo}
-                    onToggle={(id) => toggleTodo(id)}
+                    onToggle={(id) => {
+                        toggleTodo(id).catch(err => setFormError(err instanceof Error ? err.message : 'Failed to update task'));
+                    }}
                     hasChildren={children.length > 0}
                     isCollapsed={isCollapsed}
                     onToggleCollapse={() => toggleTodoCollapse(todo.id)}
@@ -984,7 +982,6 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                         updateTodo={updateTodo}
                         deleteTodo={deleteTodo}
                         moveTodo={moveTodo}
-                        refetchTodos={refetch}
                         addSection={addSection}
                         reorderSections={reorderSections}
                         openCreateTodoModal={openCreateTodoModal}

@@ -13,6 +13,8 @@ class ApiClient {
     private axiosInstance: AxiosInstance;
     private isRefreshing = false;
     private failedQueue: any[] = [];
+    private pendingGetRequests = new Map<string, Promise<unknown>>();
+    private locationSectionsCache = new Map<string, Promise<ApiResponse<Section[]>>>();
 
     constructor(baseUrl: string = API_URL) {
         this.axiosInstance = axios.create({
@@ -133,8 +135,19 @@ class ApiClient {
      * GET request
      */
     async get<T>(endpoint: string, options?: any): Promise<T> {
-        const response = await this.axiosInstance.get<T>(endpoint, options);
-        return response.data;
+        const key = `${endpoint}:${JSON.stringify(options || {})}`;
+        const pendingRequest = this.pendingGetRequests.get(key) as Promise<T> | undefined;
+        if (pendingRequest) return pendingRequest;
+
+        const request = this.axiosInstance.get<T>(endpoint, options).then(response => response.data);
+        this.pendingGetRequests.set(key, request);
+        try {
+            return await request;
+        } finally {
+            if (this.pendingGetRequests.get(key) === request) {
+                this.pendingGetRequests.delete(key);
+            }
+        }
     }
 
     /**
@@ -209,16 +222,34 @@ class ApiClient {
         description?: string,
         color?: string
     ) {
-        return this.post<ApiResponse<Section>>('/sections', {
+        const response = await this.post<ApiResponse<Section>>('/sections', {
             projectId,
             name,
             description,
             color,
         });
+        this.locationSectionsCache.clear();
+        return response;
     }
 
     async getSections(projectId: string) {
         return this.get<ApiResponse<Section[]>>(`/sections/project/${projectId}`);
+    }
+
+    async getSectionsForLocation(projectId: string) {
+        const cached = this.locationSectionsCache.get(projectId);
+        if (cached) return cached;
+
+        const request = this.getSections(projectId);
+        this.locationSectionsCache.set(projectId, request);
+        try {
+            return await request;
+        } catch (error) {
+            if (this.locationSectionsCache.get(projectId) === request) {
+                this.locationSectionsCache.delete(projectId);
+            }
+            throw error;
+        }
     }
 
     async getSection(sectionId: string) {
@@ -226,17 +257,23 @@ class ApiClient {
     }
 
     async updateSection(sectionId: string, updates: Partial<Section>) {
-        return this.put<ApiResponse<Section>>(`/sections/${sectionId}`, updates);
+        const response = await this.put<ApiResponse<Section>>(`/sections/${sectionId}`, updates);
+        if ('name' in updates) this.locationSectionsCache.clear();
+        return response;
     }
 
     async reorderSections(sections: Array<{ id: string; order: number }>) {
-        return this.patch<ApiResponse<Section[]>>('/sections/batch/reorder', {
+        const response = await this.patch<ApiResponse<Section[]>>('/sections/batch/reorder', {
             sections,
         });
+        this.locationSectionsCache.clear();
+        return response;
     }
 
     async deleteSection(sectionId: string) {
-        return this.delete<ApiResponse<{ id: string }>>(`/sections/${sectionId}`);
+        const response = await this.delete<ApiResponse<{ id: string }>>(`/sections/${sectionId}`);
+        this.locationSectionsCache.clear();
+        return response;
     }
 
     // ==================== Todos ====================
@@ -349,6 +386,8 @@ class ApiClient {
         });
 
         if (response.success && response.data && typeof window !== 'undefined') {
+            this.pendingGetRequests.clear();
+            this.locationSectionsCache.clear();
             localStorage.setItem('todo_token', response.data.token);
             localStorage.setItem('todo_refresh_token', response.data.refreshToken);
             localStorage.setItem('todo_user', JSON.stringify(response.data.user));
@@ -366,6 +405,8 @@ class ApiClient {
         });
 
         if (response.success && response.data && typeof window !== 'undefined') {
+            this.pendingGetRequests.clear();
+            this.locationSectionsCache.clear();
             localStorage.setItem('todo_token', response.data.token);
             localStorage.setItem('todo_refresh_token', response.data.refreshToken);
             localStorage.setItem('todo_user', JSON.stringify(response.data.user));
@@ -377,6 +418,8 @@ class ApiClient {
 
     logout() {
         if (typeof window !== 'undefined') {
+            this.pendingGetRequests.clear();
+            this.locationSectionsCache.clear();
             localStorage.removeItem('todo_token');
             localStorage.removeItem('todo_refresh_token');
             localStorage.removeItem('todo_user');

@@ -52,6 +52,7 @@ export function TodoItem({
     isDragging,
 }: TodoItemProps) {
     const { projects } = useApp();
+    const isPending = todo.id.startsWith('optimistic-todo-');
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState(todo.title);
     const [editDescription, setEditDescription] = useState(todo.description || '');
@@ -70,23 +71,50 @@ export function TodoItem({
         { id: 'inbox', label: 'Inbox' }
     ]);
     const [isLocOpen, setIsLocOpen] = useState(false);
+    const [locationOptionsLoading, setLocationOptionsLoading] = useState(false);
+    const [locationOptionsError, setLocationOptionsError] = useState<string | null>(null);
 
     useEffect(() => {
+        if (!isLocOpen) return;
+
+        let cancelled = false;
         const buildOptions = async () => {
             const opts = [{ id: 'inbox', label: 'Inbox' }];
-            for (const project of projects) {
-                opts.push({ id: `proj:${project.id}`, label: project.name });
-                try {
-                    const res = await apiClient.getSections(project.id);
-                    for (const sec of res.data || []) {
-                        opts.push({ id: `sec:${project.id}:${sec.id}`, label: `${project.name} / ${sec.name}` });
-                    }
-                } catch {}
+            const projectOptions = await Promise.all(projects
+                .filter(project => !project.id.startsWith('optimistic-project-'))
+                .map(async project => {
+                const projectOpts = [{ id: `proj:${project.id}`, label: project.name }];
+                const res = await apiClient.getSectionsForLocation(project.id);
+                for (const sec of res.data || []) {
+                    projectOpts.push({ id: `sec:${project.id}:${sec.id}`, label: `${project.name} / ${sec.name}` });
+                }
+                return projectOpts;
+            }));
+            for (const projectOption of projectOptions) {
+                opts.push(...projectOption);
             }
-            setLocationOptions(opts);
+            if (!cancelled) {
+                setLocationOptions(opts);
+                setLocationOptionsError(null);
+            }
         };
-        buildOptions();
-    }, [projects]);
+
+        setLocationOptionsLoading(true);
+        setLocationOptionsError(null);
+        buildOptions()
+            .catch(err => {
+                if (!cancelled) {
+                    setLocationOptionsError(err instanceof Error ? err.message : 'Failed to load locations');
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setLocationOptionsLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isLocOpen, projects]);
 
     const handleSave = () => {
         let projectId: string | null = undefined as any;
@@ -226,7 +254,11 @@ export function TodoItem({
                                     <>
                                         <div className="fixed inset-0 z-10" onClick={() => setIsLocOpen(false)} />
                                         <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded shadow z-20 max-h-48 overflow-y-auto">
-                                            {locationOptions.map(opt => (
+                                            {locationOptionsLoading ? (
+                                                <div className="px-3 py-1.5 text-xs text-gray-400">Loading locations...</div>
+                                            ) : locationOptionsError ? (
+                                                <div className="px-3 py-1.5 text-xs text-red-500">{locationOptionsError}</div>
+                                            ) : locationOptions.map(opt => (
                                                 <button key={opt.id} onClick={() => { setEditLocation(opt.id); setIsLocOpen(false); }} className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-50 truncate">
                                                     {opt.label}
                                                 </button>
@@ -250,7 +282,7 @@ export function TodoItem({
     return (
         <div
             ref={itemRef}
-            draggable
+            draggable={!isPending}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
@@ -263,7 +295,7 @@ export function TodoItem({
             </div>
             
             {hasChildren && onToggleCollapse ? (
-                <button onClick={onToggleCollapse} className="text-gray-400 hover:text-gray-600">
+                <button onClick={onToggleCollapse} disabled={isPending} className="text-gray-400 hover:text-gray-600 disabled:opacity-50">
                     {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </button>
             ) : (
@@ -272,7 +304,8 @@ export function TodoItem({
 
             <button
                 onClick={() => onToggle(todo.id)}
-                className="flex-shrink-0 text-gray-300 hover:text-rose-400 transition-colors"
+                disabled={isPending}
+                className="flex-shrink-0 text-gray-300 hover:text-rose-400 transition-colors disabled:opacity-50"
             >
                 {todo.isCompleted ? (
                     <CheckCircle2 className="w-4 h-4 text-rose-400 fill-rose-50" />
@@ -281,7 +314,7 @@ export function TodoItem({
                 )}
             </button>
 
-            <div className="flex-1 min-w-0" onClick={() => setIsEditing(true)}>
+            <div className="flex-1 min-w-0" onClick={() => !isPending && setIsEditing(true)}>
                 <p className={`text-sm truncate ${todo.isCompleted ? 'line-through text-gray-300' : 'text-gray-800'}`}>
                     {todo.title}
                 </p>
@@ -300,7 +333,7 @@ export function TodoItem({
                 )}
 
                 <div className="relative">
-                    <button onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-all">
+                    <button onClick={() => !isPending && setIsDropdownOpen(!isDropdownOpen)} disabled={isPending} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-all disabled:cursor-wait">
                         <MoreHorizontal className="w-4 h-4" />
                     </button>
                     {isDropdownOpen && (

@@ -173,8 +173,9 @@ export function Sidebar() {
                                     key={project.id}
                                     href={`/projects/${project.id}`}
                                     icon={<FolderOpen className="w-4 h-4" />}
-                                    label={project.name}
+                                    label={project.id.startsWith('optimistic-project-') ? `${project.name}...` : project.name}
                                     active={isActive}
+                                    disabled={project.id.startsWith('optimistic-project-')}
                                 />
                             );
                         })
@@ -213,17 +214,31 @@ interface SidebarLinkProps {
     icon: React.ReactNode;
     label: string;
     active: boolean;
+    disabled?: boolean;
 }
 
-function SidebarLink({ href, icon, label, active }: SidebarLinkProps) {
+function SidebarLink({ href, icon, label, active, disabled = false }: SidebarLinkProps) {
+    const className = `flex items-center gap-2.5 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
+        disabled
+            ? 'text-gray-400 cursor-wait'
+            : active
+                ? 'bg-rose-50/80 text-rose-600'
+                : 'text-gray-600 hover:bg-rose-50/40 hover:text-gray-900'
+    }`;
+
+    if (disabled) {
+        return (
+            <div className={className} aria-disabled="true">
+                <span className="text-gray-400">{icon}</span>
+                <span className="truncate">{label}</span>
+            </div>
+        );
+    }
+
     return (
         <Link
             href={href}
-            className={`flex items-center gap-2.5 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                active
-                    ? 'bg-rose-50/80 text-rose-600'
-                    : 'text-gray-600 hover:bg-rose-50/40 hover:text-gray-900'
-            }`}
+            className={className}
         >
             <span className={active ? 'text-rose-500' : 'text-gray-400'}>{icon}</span>
             <span className="truncate">{label}</span>

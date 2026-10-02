@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
 import { Flag, ChevronDown, Inbox, Hash, FolderOpen } from 'lucide-react';
-import { apiClient, Section } from '@/lib/api-client';
+import { apiClient, Section, Todo } from '@/lib/api-client';
 import { ErrorAlert } from './Layout';
 
 const PRIORITIES = [
@@ -187,7 +187,7 @@ export function CreateTodoModal() {
                 { id: 'inbox', label: 'Inbox', icon: 'inbox' },
             ];
 
-            for (const project of projects) {
+            for (const project of projects.filter(item => !item.id.startsWith('optimistic-project-'))) {
                 opts.push({
                     id: `proj:${project.id}`,
                     label: project.name,
@@ -196,7 +196,7 @@ export function CreateTodoModal() {
                 });
 
                 try {
-                    const res = await apiClient.getSections(project.id);
+                    const res = await apiClient.getSectionsForLocation(project.id);
                     const sections = res.data || [];
                     for (const section of sections) {
                         opts.push({
@@ -256,19 +256,49 @@ export function CreateTodoModal() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!title.trim() || isLoading) return;
+        let temporaryId: string | undefined;
         try {
             setIsLoading(true);
             setError(null);
             const { projectId, sectionId } = parseLocation(locationId);
-            await apiClient.createTodo(
+            const now = new Date().toISOString();
+            temporaryId = `optimistic-todo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            const user = apiClient.getCurrentUser();
+            const optimisticTodo: Todo = {
+                id: temporaryId,
+                userId: user?.id || '',
+                projectId: projectId || 'none',
+                sectionId,
+                title: title.trim(),
+                description: description.trim() || undefined,
+                priority,
+                isCompleted: false,
+                order: 0,
+                createdAt: now,
+                updatedAt: now,
+                deletedAt: null,
+            };
+            window.dispatchEvent(new CustomEvent('todo-created', {
+                detail: { todo: optimisticTodo },
+            }));
+
+            const response = await apiClient.createTodo(
                 title.trim(),
                 projectId,
                 sectionId,
                 { description: description.trim() || undefined, priority }
             );
-            window.dispatchEvent(new CustomEvent('todo-created'));
+            if (!response.data) throw new Error('The server did not return the created task');
+            window.dispatchEvent(new CustomEvent('todo-created', {
+                detail: { todo: response.data, temporaryId },
+            }));
             setCreateTodoModalOpen(false);
         } catch (err) {
+            if (temporaryId) {
+                window.dispatchEvent(new CustomEvent('todo-create-failed', {
+                    detail: { temporaryId },
+                }));
+            }
             setError(err instanceof Error ? err.message : 'Failed to create task');
         } finally {
             setIsLoading(false);
