@@ -138,35 +138,40 @@ class ApiClient {
      * GET request
      */
     async get<T>(endpoint: string, options?: any): Promise<T> {
-        return this.axiosInstance.get<any, T>(endpoint, options);
+        const response = await this.axiosInstance.get<T>(endpoint, options);
+        return response.data;
     }
 
     /**
      * POST request
      */
     async post<T>(endpoint: string, data?: any, options?: any): Promise<T> {
-        return this.axiosInstance.post<any, T>(endpoint, data, options);
+        const response = await this.axiosInstance.post<T>(endpoint, data, options);
+        return response.data;
     }
 
     /**
      * PUT request
      */
     async put<T>(endpoint: string, data?: any, options?: any): Promise<T> {
-        return this.axiosInstance.put<any, T>(endpoint, data, options);
+        const response = await this.axiosInstance.put<T>(endpoint, data, options);
+        return response.data;
     }
 
     /**
      * PATCH request
      */
     async patch<T>(endpoint: string, data?: any, options?: any): Promise<T> {
-        return this.axiosInstance.patch<any, T>(endpoint, data, options);
+        const response = await this.axiosInstance.patch<T>(endpoint, data, options);
+        return response.data;
     }
 
     /**
      * DELETE request
      */
     async delete<T>(endpoint: string, options?: any): Promise<T> {
-        return this.axiosInstance.delete<any, T>(endpoint, options);
+        const response = await this.axiosInstance.delete<T>(endpoint, options);
+        return response.data;
     }
 
     // ==================== Projects ====================
