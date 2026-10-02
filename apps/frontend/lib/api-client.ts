@@ -25,12 +25,7 @@ class ApiClient {
         // Request interceptor to attach bearer token
         this.axiosInstance.interceptors.request.use(
             (config) => {
-                // Resolve hostname dynamically if on different device
                 if (typeof window !== 'undefined') {
-                    const hostname = window.location.hostname;
-                    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
-                        config.baseURL = `http://${hostname}:5000/api`;
-                    }
                     const token = localStorage.getItem('todo_token');
                     if (token) {
                         config.headers.Authorization = `Bearer ${token}`;
