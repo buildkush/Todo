@@ -38,7 +38,7 @@ class ApiClient {
 
         // Response interceptor to handle 401 Unauthorized / Token Expiry
         this.axiosInstance.interceptors.response.use(
-            (response) => response.data,
+            (response) => response,
             async (error) => {
                 const originalRequest = error.config;
 
@@ -82,7 +82,7 @@ class ApiClient {
                             refreshToken,
                         });
 
-                        const data = response as unknown as ApiResponse<{ token: string; refreshToken: string }>;
+                        const data = response.data as ApiResponse<{ token: string; refreshToken: string }>;
 
                         if (data.success && data.data) {
                             const newAccessToken = data.data.token;
@@ -343,19 +343,16 @@ class ApiClient {
     // ==================== Authentication ====================
 
     async login(email: string, password: string) {
-        console.log('[apiClient.login] sending payload', { email, password: '***' });
         const response = await this.post<ApiResponse<{ user: any; token: string; refreshToken: string }>>('/auth/login', {
             email,
             password,
         });
-        console.log('[apiClient.login] raw response', response);
 
         if (response.success && response.data && typeof window !== 'undefined') {
             localStorage.setItem('todo_token', response.data.token);
             localStorage.setItem('todo_refresh_token', response.data.refreshToken);
             localStorage.setItem('todo_user', JSON.stringify(response.data.user));
             window.dispatchEvent(new Event('auth-changed'));
-            console.log('[apiClient.login] auth state saved');
         }
 
         return response;
