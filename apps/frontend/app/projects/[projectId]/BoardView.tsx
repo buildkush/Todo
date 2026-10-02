@@ -123,7 +123,8 @@ export default function BoardView({
         };
     }, []);
 
-    const rootTodos = todos.filter(t => !t.parentTodoId);
+    const todoIds = new Set(todos.map(todo => todo.id));
+    const rootTodos = todos.filter(todo => !todo.parentTodoId || !todoIds.has(todo.parentTodoId));
     const hasUnsectionedTodos = rootTodos.some(t => !t.sectionId);
     
     const getSubtaskCount = (todoId: string) => {

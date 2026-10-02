@@ -153,6 +153,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
     // Helper to traverse and calculate visible todos in order with their depths
     const getVisibleTodosForSection = useCallback((sectionId: string | null) => {
         const result: { todo: Todo; depth: number }[] = [];
+        const todoIds = new Set(todos.map(todo => todo.id));
         const traverse = (todo: Todo, depth: number) => {
             result.push({ todo, depth });
             const children = todos.filter(t => t.parentTodoId === todo.id).sort((a, b) => a.order - b.order);
@@ -163,7 +164,10 @@ export default function ProjectPage({ params }: ProjectPageProps) {
         };
 
         const rootTodos = todos
-            .filter(t => (sectionId ? t.sectionId === sectionId : !t.sectionId) && !t.parentTodoId)
+            .filter(t =>
+                (sectionId ? t.sectionId === sectionId : !t.sectionId) &&
+                (!t.parentTodoId || !todoIds.has(t.parentTodoId))
+            )
             .sort((a, b) => a.order - b.order);
 
         rootTodos.forEach(todo => traverse(todo, 0));
@@ -462,12 +466,14 @@ export default function ProjectPage({ params }: ProjectPageProps) {
     }
 
     // Group todos
-    const unsectionedTodos = todos.filter(t => !t.sectionId && !t.parentTodoId).sort((a, b) => a.order - b.order);
+    const todoIds = new Set(todos.map(todo => todo.id));
+    const isRootOrOrphan = (todo: Todo) => !todo.parentTodoId || !todoIds.has(todo.parentTodoId);
+    const unsectionedTodos = todos.filter(t => !t.sectionId && isRootOrOrphan(t)).sort((a, b) => a.order - b.order);
     const sortedSections = [...sections].sort((a, b) => a.order - b.order);
     const displaySections = draggedSectionId ? localSections : sortedSections;
 
     const getTodosForSection = (sectionId: string) =>
-        todos.filter(t => t.sectionId === sectionId && !t.parentTodoId).sort((a, b) => a.order - b.order);
+        todos.filter(t => t.sectionId === sectionId && isRootOrOrphan(t)).sort((a, b) => a.order - b.order);
 
     const getSubTodos = (parentId: string) =>
         todos.filter(t => t.parentTodoId === parentId).sort((a, b) => a.order - b.order);
