@@ -38,7 +38,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
     const { projectId } = use(params);
     const router = useRouter();
     const { project, loading: projectLoading, error: projectError, updateProject } = useProject(projectId);
-    const { todos, loading: todosLoading, addTodo, updateTodo, deleteTodo, toggleTodo, moveTodo } = useTodos(projectId);
+    const { todos, loading: todosLoading, error: todosError, addTodo, updateTodo, deleteTodo, toggleTodo, moveTodo, refetch: refetchTodos } = useTodos(projectId);
     const { sections, loading: sectionsLoading, addSection, updateSection, deleteSection, reorderSections } = useSections(projectId);
     const { openCreateTodoModal } = useApp();
 
@@ -969,6 +969,14 @@ export default function ProjectPage({ params }: ProjectPageProps) {
  
                 {/* Messages */}
                 {projectError && <ErrorAlert message={projectError} />}
+                {todosError && (
+                    <div className="flex items-center gap-3 mb-3">
+                        <ErrorAlert message={todosError} />
+                        <button onClick={() => void refetchTodos()} className="text-xs font-semibold text-rose-600 hover:text-rose-700">
+                            Retry
+                        </button>
+                    </div>
+                )}
                 {formError && <ErrorAlert message={formError} onDismiss={() => setFormError(null)} />}
                 {successMessage && <SuccessAlert message={successMessage} onDismiss={() => setSuccessMessage(null)} />}
  

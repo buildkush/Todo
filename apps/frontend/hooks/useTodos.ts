@@ -52,7 +52,11 @@ export function useTodos(projectId: string): UseTodosResult {
             }
         } finally {
             if (requestVersion === fetchVersion.current) {
-                setLoadingSnapshot({ projectId, loading: false });
+                if (dataVersions.current.get(projectId) !== dataVersion) {
+                    void fetchTodos();
+                } else {
+                    setLoadingSnapshot({ projectId, loading: false });
+                }
             }
         }
     }, [projectId]);

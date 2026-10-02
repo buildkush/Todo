@@ -50,7 +50,7 @@ function EmptyInboxIllustration() {
 
 export default function Home() {
     const projectId = 'none'; // Represent Inbox
-    const { todos, loading: todosLoading, updateTodo, deleteTodo, toggleTodo } = useTodos(projectId);
+    const { todos, loading: todosLoading, error: todosError, updateTodo, deleteTodo, toggleTodo, refetch: refetchTodos } = useTodos(projectId);
     const { sections, addSection, updateSection, deleteSection, reorderSections } = useSections(projectId);
     const { openCreateTodoModal } = useApp();
 
@@ -815,6 +815,14 @@ export default function Home() {
         <Layout>
             <div className="max-w-6xl mx-auto px-6 py-8 min-h-screen flex flex-col">
                 {/* Alerts */}
+                {todosError && (
+                    <div className="flex items-center gap-3 mb-3">
+                        <ErrorAlert message={todosError} />
+                        <button onClick={() => void refetchTodos()} className="text-xs font-semibold text-rose-600 hover:text-rose-700">
+                            Retry
+                        </button>
+                    </div>
+                )}
                 {formError && <ErrorAlert message={formError} onDismiss={() => setFormError(null)} />}
                 {successMessage && <SuccessAlert message={successMessage} onDismiss={() => setSuccessMessage(null)} />}
 
