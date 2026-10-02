@@ -293,8 +293,41 @@ class ApiClient {
     }
 
     async getTodos(projectId?: string) {
-        const query = projectId ? `?projectId=${projectId}` : '';
-        return this.get<ApiResponse<Todo[]>>(`/todos${query}`);
+        const pageSize = 100;
+        const todos: Todo[] = [];
+        let skip = 0;
+        let total: number | undefined;
+        let response: ApiResponse<Todo[]> & { total?: number } | undefined;
+
+        while (true) {
+            const params = new URLSearchParams({
+                skip: String(skip),
+                take: String(pageSize),
+                sortBy: 'order',
+                sortOrder: 'asc',
+            });
+            if (projectId) params.set('projectId', projectId);
+
+            response = await this.get<ApiResponse<Todo[]> & { total?: number }>(
+                `/todos?${params.toString()}`
+            );
+            const page = response.data || [];
+            todos.push(...page);
+            skip += page.length;
+            total = response.total;
+
+            if (
+                page.length === 0 ||
+                (total !== undefined && todos.length >= total) ||
+                (total === undefined && page.length < pageSize)
+            ) break;
+        }
+
+        return {
+            ...response,
+            data: todos,
+            total: total ?? todos.length,
+        };
     }
 
     async getTodo(todoId: string) {
