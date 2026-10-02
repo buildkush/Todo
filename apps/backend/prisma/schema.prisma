@@ -23,6 +23,7 @@ model User {
   todos              Todo[]
   sections           Section[]
   boardSections      BoardSection[]
+  refreshTokens      RefreshToken[]
 
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -73,6 +74,10 @@ model Todo {
   boardSectionId String?
   boardSection   BoardSection? @relation(fields: [boardSectionId], references: [id], onDelete: Cascade)
   
+  parentTodoId   String?
+  parentTodo     Todo?         @relation("SubTodos", fields: [parentTodoId], references: [id], onDelete: Cascade)
+  subTodos       Todo[]        @relation("SubTodos")
+  
   title          String
   description    String?
   isCompleted    Boolean   @default(false)
@@ -90,6 +95,7 @@ model Todo {
   @@index([projectId, sectionId, order, deletedAt])
   @@index([projectId, boardSectionId, order, deletedAt])
   @@index([isCompleted, userId, deletedAt])
+  @@index([parentTodoId, order, deletedAt])
 }
 
 model Section {
@@ -97,8 +103,8 @@ model Section {
   userId      String
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  projectId   String
-  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId   String?
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   
   name        String
   description String?
@@ -138,4 +144,15 @@ model BoardSection {
 
   @@index([projectId, order, deletedAt])
   @@index([userId, deletedAt])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }

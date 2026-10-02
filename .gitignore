@@ -4,15 +4,15 @@ node_modules/
 .pnp.js
 
 # Environment variables (NEVER commit secrets!)
-.env
-.env.local
-.env.*.local
+.env*
+!.env.example
 
 # Build outputs
 dist/
 .next/
 .turbo/
 build/
+*.tsbuildinfo
 
 # IDE
 .vscode/

@@ -3,6 +3,23 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { PrismaClient } from "@prisma/client";
 
+// Import middleware
+import {
+    errorHandler,
+    notFoundHandler,
+} from "./middleware/errorHandler";
+import {
+    requestIdMiddleware,
+    jwtAuthMiddleware,
+} from "./middleware/validators";
+
+// Import routes
+import authRoutes from "./routes/authRoutes";
+import projectRoutes from "./routes/projectRoutes";
+import todoRoutes from "./routes/todoRoutes";
+import sectionRoutes from "./routes/sectionRoutes";
+import boardSectionRoutes from "./routes/boardSectionRoutes";
+
 // Load environment variables
 dotenv.config();
 
@@ -12,17 +29,32 @@ const PORT = process.env.PORT || 5000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 
 // ============================================================================
-// MIDDLEWARE
+// GLOBAL MIDDLEWARE
 // ============================================================================
+
+// Request ID tracking
+app.use(requestIdMiddleware);
 
 // CORS Configuration
 app.use(
-  cors({
-    origin: FRONTEND_URL,
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
+    cors({
+        origin: (origin, callback) => {
+            if (!origin) return callback(null, true);
+            const isLocal = origin.startsWith("http://localhost") || 
+                            origin.startsWith("http://127.0.0.1") || 
+                            /^http:\/\/192\.168\.\d+\.\d+(:\d+)?$/.test(origin) ||
+                            /^http:\/\/10\.\d+\.\d+\.\d+(:\d+)?$/.test(origin) ||
+                            /^http:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+(:\d+)?$/.test(origin);
+            if (isLocal) {
+                callback(null, true);
+            } else {
+                callback(null, [FRONTEND_URL]);
+            }
+        },
+        credentials: true,
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "x-request-id"],
+    })
 );
 
 // Body parsing
@@ -33,75 +65,70 @@ app.use(express.urlencoded({ extended: true }));
 // ROUTES
 // ============================================================================
 
-// Health check endpoint
+// Health check endpoint (Public)
 app.get("/api/health", (req, res) => {
-  res.json({
-    status: "OK",
-    message: "Backend is running",
-    timestamp: new Date().toISOString(),
-  });
+    res.json({
+        success: true,
+        status: "OK",
+        message: "Backend is running",
+        timestamp: new Date().toISOString(),
+    });
 });
 
-// TODO: Add routes
-// app.use('/api/projects', projectRoutes);
-// app.use('/api/todos', todoRoutes);
-// app.use('/api/sections', sectionRoutes);
-// app.use('/api/boardSections', boardSectionRoutes);
+// Public Auth API Routes
+app.use("/api/auth", authRoutes);
+
+// Apply JWT Authentication globally to all subsequent routes
+app.use(jwtAuthMiddleware);
+
+// Protected API Routes
+app.use("/api/projects", projectRoutes);
+app.use("/api/todos", todoRoutes);
+app.use("/api/sections", sectionRoutes);
+app.use("/api/boardSections", boardSectionRoutes);
 
 // ============================================================================
 // ERROR HANDLING
 // ============================================================================
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    error: "NotFound",
-    message: `Route ${req.path} not found`,
-  });
-});
+// 404 Not Found
+app.use(notFoundHandler);
 
-// Error handler
-app.use(
-  (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    console.error("Error:", err);
-    res.status(500).json({
-      error: "InternalServerError",
-      message: process.env.NODE_ENV === "production" ? "Internal server error" : err.message,
-    });
-  }
-);
+// Global error handler (must be last)
+app.use(errorHandler);
 
 // ============================================================================
-// SERVER START
+// START SERVER
 // ============================================================================
 
-const server = app.listen(PORT, () => {
-  console.log(`
-╔════════════════════════════════════════╗
-║   🚀 Todo App Backend                  ║
-║   Port: ${PORT}                           ║
-║   Environment: ${process.env.NODE_ENV || "development"}          ║
-║   CORS Origin: ${FRONTEND_URL}    ║
-╚════════════════════════════════════════╝
-  `);
-  console.log(`✅ Server running at http://localhost:${PORT}`);
-  console.log(`📡 Health check: http://localhost:${PORT}/api/health`);
-});
+const startServer = async () => {
+    try {
+        // Verify database connection
+        await prisma.$connect();
+        console.log("✅ Database connected successfully");
+
+        // Start Express server
+        app.listen(Number(PORT), "0.0.0.0", () => {
+            console.log(`🚀 Server running at http://localhost:${PORT}`);
+            console.log(`📚 API Base URL: http://localhost:${PORT}/api`);
+            console.log(`🔗 Frontend URL: ${FRONTEND_URL}`);
+        });
+    } catch (error) {
+        console.error("❌ Failed to start server:", error);
+        process.exit(1);
+    }
+};
 
 // Graceful shutdown
 process.on("SIGINT", async () => {
-  console.log("\n⏹️  Shutting down gracefully...");
-  server.close(async () => {
+    console.log("\n📵 Shutting down gracefully...");
     await prisma.$disconnect();
-    console.log("✅ Server stopped");
     process.exit(0);
-  });
 });
 
-process.on("SIGTERM", async () => {
-  console.log("\n⏹️  Shutting down gracefully...");
-  await prisma.$disconnect();
-  process.exit(0);
-});
+startServer();
 
 export default app;
+export { prisma };
+// Trigger restart
+

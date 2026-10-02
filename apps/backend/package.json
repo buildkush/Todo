@@ -4,11 +4,10 @@
   "description": "Todo App - Express backend with Prisma ORM",
   "private": true,
   "main": "dist/index.js",
-  "type": "module",
   "scripts": {
-    "dev": "nodemon --exec ts-node src/index.ts",
+    "dev": "npm run prisma:migrate && nodemon --exec ts-node src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js",
+    "start": "npm run prisma:migrate && node dist/index.js",
     "prisma:gen": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
@@ -18,20 +17,24 @@
     "test": "echo 'Testing...'"
   },
   "dependencies": {
-    "express": "^4.18.2",
+    "@prisma/client": "^5.8.0",
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "@prisma/client": "^5.8.0",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.3",
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "typescript": "^5.3.3",
-    "ts-node": "^10.9.2",
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.10.6",
+    "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^20.10.6",
     "nodemon": "^3.0.2",
-    "prisma": "^5.8.0"
+    "prisma": "^5.8.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
   },
   "engines": {
     "node": ">=18.0.0",
