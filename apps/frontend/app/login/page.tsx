@@ -40,6 +40,8 @@ export default function LoginPage() {
         try {
             setLoading(true);
             const response = await apiClient.login(email, password);
+            console.log('[LoginPage] response received', response);
+            console.log('[LoginPage] response.success =', response?.success);
             if (response.success) {
                 // Redirect to dashboard/home
                 router.push('/');
@@ -47,6 +49,7 @@ export default function LoginPage() {
                 setError(response.message || 'Invalid email or password.');
             }
         } catch (err) {
+            console.error('[LoginPage] login failed', err);
             setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
         } finally {
             setLoading(false);
