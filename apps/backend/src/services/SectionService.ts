@@ -89,7 +89,7 @@ export class SectionService {
             orderBy: { order: "asc" },
         });
 
-        return sections.map((s) => this.formatSectionResponse(s));
+        return sections.map((s: any) => this.formatSectionResponse(s));
     }
 
     /**
@@ -153,7 +153,7 @@ export class SectionService {
         }
 
         // Check ownership
-        if (!dbSections.every((s) => s.userId === userId)) {
+        if (!dbSections.every((s: any) => s.userId === userId)) {
             throw new ForbiddenError("You don't have access to some sections");
         }
 

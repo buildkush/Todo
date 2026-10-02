@@ -113,7 +113,7 @@ export class TodoService {
         ]);
 
         return {
-            data: todos.map((t) => this.formatTodoResponse(t)),
+            data: todos.map((t: any) => this.formatTodoResponse(t)),
             total,
             skip: params.skip,
             take: params.take,
@@ -213,7 +213,7 @@ export class TodoService {
             const siblings = await prisma.todo.findMany({
                 where: { parentTodoId: todo.parentTodoId, deletedAt: null }
             });
-            const allDone = siblings.every(s => s.isCompleted);
+            const allDone = siblings.every((s: { isCompleted: boolean }) => s.isCompleted);
             if (allDone) {
                 await prisma.todo.update({
                     where: { id: todo.parentTodoId },
@@ -380,7 +380,7 @@ export class TodoService {
             where: { parentTodoId: todoId, userId, deletedAt: null },
             orderBy: { order: 'asc' },
         });
-        return todos.map(t => this.formatTodoResponse(t));
+        return todos.map((t: any) => this.formatTodoResponse(t));
     }
 }
 

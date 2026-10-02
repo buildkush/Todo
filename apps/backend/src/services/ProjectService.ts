@@ -73,7 +73,7 @@ export class ProjectService {
         ]);
 
         return {
-            data: projects.map((p) => this.formatProjectResponse(p)),
+            data: projects.map((p: any) => this.formatProjectResponse(p)),
             total,
             skip: params.skip,
             take: params.take,

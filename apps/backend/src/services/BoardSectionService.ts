@@ -80,7 +80,7 @@ export class BoardSectionService {
             orderBy: { order: "asc" },
         });
 
-        return boardSections.map((bs) => this.formatBoardSectionResponse(bs));
+        return boardSections.map((bs: any) => this.formatBoardSectionResponse(bs));
     }
 
     /**
@@ -148,7 +148,7 @@ export class BoardSectionService {
         }
 
         // Check ownership
-        if (!dbBoardSections.every((bs) => bs.userId === userId)) {
+        if (!dbBoardSections.every((bs: any) => bs.userId === userId)) {
             throw new ForbiddenError(
                 "You don't have access to some board sections"
             );
