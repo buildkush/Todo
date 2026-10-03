@@ -42,11 +42,11 @@ export function useTodos(projectId: string): UseTodosResult {
             setLoadingSnapshot({ projectId, loading: true });
             setErrorSnapshot({ projectId, error: null });
             const response = await apiClient.getTodos(projectId);
-            if (requestVersion === fetchVersion.current && dataVersions.current.get(projectId) === dataVersion) {
+            if (requestVersion === fetchVersion.current && (dataVersions.current.get(projectId) || 0) === dataVersion) {
                 setTodoSnapshot({ projectId, todos: response.data || [] });
             }
         } catch (err) {
-            if (requestVersion === fetchVersion.current && dataVersions.current.get(projectId) === dataVersion) {
+            if (requestVersion === fetchVersion.current && (dataVersions.current.get(projectId) || 0) === dataVersion) {
                 setErrorSnapshot({ projectId, error: err instanceof Error ? err.message : 'Failed to fetch todos' });
                 setTodoSnapshot({ projectId, todos: [] });
             }
