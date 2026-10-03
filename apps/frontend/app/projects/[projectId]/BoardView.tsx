@@ -188,13 +188,22 @@ export default function BoardView({
         e.preventDefault();
         e.stopPropagation();
         
-        if (!draggedTodoId) return;
+        const activeDraggedId = draggedTodoId;
+        const activeDropTarget = todoDropTarget;
+        
+        setDraggedTodoId(null);
+        setDraggedSectionId(null);
+        setTodoDropTarget(null);
+        setSectionDropTarget(null);
+        setDragOverSectionId(null);
+
+        if (!activeDraggedId) return;
 
         let newOrder: number | undefined;
         let newSectionId = targetSectionId;
 
-        if (todoDropTarget) {
-            const targetTodo = rootTodos.find(t => t.id === todoDropTarget.todoId);
+        if (activeDropTarget) {
+            const targetTodo = rootTodos.find(t => t.id === activeDropTarget.todoId);
             if (targetTodo) {
                 newSectionId = targetTodo.sectionId || null;
                 const sectionTodos = rootTodos
@@ -202,7 +211,7 @@ export default function BoardView({
                     .sort((a, b) => a.order - b.order);
                 
                 const targetIndex = sectionTodos.findIndex(t => t.id === targetTodo.id);
-                if (todoDropTarget.position === 'before') {
+                if (activeDropTarget.position === 'before') {
                     newOrder = Math.round(targetIndex === 0 ? targetTodo.order / 2 : (sectionTodos[targetIndex - 1].order + targetTodo.order) / 2);
                 } else {
                     newOrder = Math.round(targetIndex === sectionTodos.length - 1 ? targetTodo.order + 100 : (targetTodo.order + sectionTodos[targetIndex + 1].order) / 2);
@@ -212,7 +221,7 @@ export default function BoardView({
 
         try {
             const sectionIdParam = newSectionId === null ? 'unsectioned' : newSectionId;
-            await moveTodo(draggedTodoId, sectionIdParam, undefined, newOrder);
+            await moveTodo(activeDraggedId, sectionIdParam, undefined, newOrder);
         } catch (err) {
             setFormError(err instanceof Error ? err.message : 'Failed to move task');
         }
@@ -231,10 +240,19 @@ export default function BoardView({
 
     const handleSectionDrop = async (e: React.DragEvent, targetSectionId: string | null) => {
         e.preventDefault();
-        if (!draggedSectionId || draggedSectionId === targetSectionId || !targetSectionId) return;
+        
+        const activeDraggedSectionId = draggedSectionId;
+        
+        setDraggedTodoId(null);
+        setDraggedSectionId(null);
+        setTodoDropTarget(null);
+        setSectionDropTarget(null);
+        setDragOverSectionId(null);
+
+        if (!activeDraggedSectionId || activeDraggedSectionId === targetSectionId || !targetSectionId) return;
 
         const currentSections = [...sections];
-        const draggedIndex = currentSections.findIndex(s => s.id === draggedSectionId);
+        const draggedIndex = currentSections.findIndex(s => s.id === activeDraggedSectionId);
         const targetIndex = currentSections.findIndex(s => s.id === targetSectionId);
         
         if (draggedIndex === -1 || targetIndex === -1) return;
