@@ -203,9 +203,9 @@ export default function BoardView({
                 
                 const targetIndex = sectionTodos.findIndex(t => t.id === targetTodo.id);
                 if (todoDropTarget.position === 'before') {
-                    newOrder = targetIndex === 0 ? targetTodo.order / 2 : (sectionTodos[targetIndex - 1].order + targetTodo.order) / 2;
+                    newOrder = Math.round(targetIndex === 0 ? targetTodo.order / 2 : (sectionTodos[targetIndex - 1].order + targetTodo.order) / 2);
                 } else {
-                    newOrder = targetIndex === sectionTodos.length - 1 ? targetTodo.order + 100 : (targetTodo.order + sectionTodos[targetIndex + 1].order) / 2;
+                    newOrder = Math.round(targetIndex === sectionTodos.length - 1 ? targetTodo.order + 100 : (targetTodo.order + sectionTodos[targetIndex + 1].order) / 2);
                 }
             }
         }
