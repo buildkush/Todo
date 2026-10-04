@@ -38,6 +38,7 @@ type TodoDropTarget = {
 
 export default function ProjectPage({ params }: ProjectPageProps) {
     const { projectId } = use(params);
+    const { isSidebarCollapsed } = useApp();
     const router = useRouter();
     const { project, loading: projectLoading, error: projectError, updateProject } = useProject(projectId);
     const { todos, loading: todosLoading, error: todosError, addTodo, updateTodo, deleteTodo, toggleTodo, moveTodo, refetch: refetchTodos } = useTodos(projectId);
@@ -937,7 +938,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
             <div className="flex w-full h-[calc(100vh-64px)] relative bg-white">
                 <div className={`flex-1 flex flex-col overflow-y-auto ${project.viewType === 'board' ? 'w-full px-8' : 'max-w-6xl mx-auto px-6'} py-8 transition-all`}>
                 {/* Header */}
-                <div className="flex items-center justify-between mb-6 pl-12 md:pl-0">
+                <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 ${isSidebarCollapsed ? 'pl-10' : 'pl-0'}`}>
                     <div className="flex items-center gap-3">
 
                         {editingProjectName ? (
@@ -974,8 +975,8 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                             </h1>
                         )}
                     </div>
-                    <div className="flex items-center gap-4">
-                        <div className="flex bg-gray-100 p-1 rounded-lg">
+                    <div className="flex flex-wrap items-center gap-3 md:gap-4 w-full md:w-auto">
+                        <div className="flex bg-gray-100 p-1 rounded-lg shrink-0">
                             <button
                                 onClick={() => handleToggleView('list')}
                                 className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${project.viewType === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}

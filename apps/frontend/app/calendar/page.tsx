@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Layout, LoadingSpinner, ErrorAlert } from '@/components/Layout';
 import { apiClient, Todo } from '@/lib/api-client';
 import { useProjects } from '@/hooks/useProjectsHook';
+import { useApp } from '@/context/AppContext';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
@@ -13,6 +14,7 @@ export default function GlobalCalendarPage() {
     const [loadingTodos, setLoadingTodos] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [currentDate, setCurrentDate] = useState(new Date());
+    const { isSidebarCollapsed } = useApp();
     const router = useRouter();
 
     useEffect(() => {
@@ -115,7 +117,7 @@ export default function GlobalCalendarPage() {
 
     return (
         <Layout>
-            <div className="max-w-6xl mx-auto px-6 py-8 min-h-screen flex flex-col pl-12 md:pl-6">
+            <div className={`max-w-6xl mx-auto px-6 py-8 min-h-screen flex flex-col ${isSidebarCollapsed ? 'pl-14' : 'pl-6'}`}>
                 <div className="flex items-center gap-3 mb-8">
                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-rose-400 to-rose-600 flex items-center justify-center shadow-lg shadow-rose-200">
                         <CalendarIcon className="w-5 h-5 text-white" />
@@ -133,7 +135,7 @@ export default function GlobalCalendarPage() {
                         <LoadingSpinner />
                     </div>
                 ) : (
-                    <div className="flex flex-col bg-white rounded-2xl border border-gray-100 shadow-xl overflow-hidden min-h-[600px] flex-1">
+                    <div className="flex flex-col bg-white rounded-2xl border border-gray-100 shadow-xl w-full flex-1 mb-8">
                         {/* Calendar Header */}
                         <div className="flex items-center justify-between p-6 border-b border-gray-100 bg-gray-50/50">
                             <h2 className="text-xl font-bold text-gray-900">{monthNames[month]} {year}</h2>
@@ -178,8 +180,13 @@ export default function GlobalCalendarPage() {
                                                     <span className="text-xs font-bold text-gray-400 mt-1">{dayTodos.length}</span>
                                                 )}
                                             </div>
-                                            <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto max-h-[150px]" style={{ scrollbarWidth: 'none' }}>
-                                                {dayTodos.map(todo => renderTodoItem(todo))}
+                                            <div className="flex-1 flex flex-col gap-1.5 mt-1">
+                                                {dayTodos.slice(0, 3).map(todo => renderTodoItem(todo))}
+                                                {dayTodos.length > 3 && (
+                                                    <div className="text-[10px] font-semibold text-gray-400 pl-1 pt-1">
+                                                        + {dayTodos.length - 3} more
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     );

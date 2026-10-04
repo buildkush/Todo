@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
-import { Flag, ChevronDown, Inbox, Hash, FolderOpen } from 'lucide-react';
+import { Flag, ChevronDown, Inbox, Hash, FolderOpen, X } from 'lucide-react';
 import { apiClient, Section, Todo } from '@/lib/api-client';
 import { ErrorAlert } from './Layout';
 
@@ -155,6 +155,9 @@ export function CreateTodoModal() {
     const [description, setDescription] = useState('');
     const [locationId, setLocationId] = useState<string>('inbox');
     const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('low');
+    const [dueDate, setDueDate] = useState<string>('');
+    const [tags, setTags] = useState<string[]>([]);
+    const [tagInput, setTagInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const titleInputRef = useRef<HTMLInputElement>(null);
@@ -286,7 +289,14 @@ export function CreateTodoModal() {
                 title.trim(),
                 projectId,
                 sectionId,
-                { description: description.trim() || undefined, priority }
+                { 
+                    description: description.trim() || undefined, 
+                    priority,
+                    boardSectionId: createTodoModalState.mode === 'board' ? createTodoModalState.boardSectionId : undefined,
+                    parentTodoId: createTodoModalState.mode === 'subtask' ? createTodoModalState.parentId : undefined,
+                    dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
+                    tags: tags.length > 0 ? tags : undefined
+                }
             );
             if (!response.data) throw new Error('The server did not return the created task');
             window.dispatchEvent(new CustomEvent('todo-created', {
@@ -336,9 +346,50 @@ export function CreateTodoModal() {
                             className="w-full text-sm text-gray-500 placeholder-gray-300 border-none outline-none bg-transparent resize-none mt-1"
                         />
                         {/* Option chips */}
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
                             <PriorityDropdown value={priority} onChange={setPriority} />
+                            
+                            <div className="relative">
+                                <input
+                                    type="date"
+                                    value={dueDate}
+                                    onChange={(e) => setDueDate(e.target.value)}
+                                    className="flex items-center gap-1.5 px-2.5 py-1 border border-gray-200 rounded-lg text-xs font-normal text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition-colors outline-none h-[28px] bg-transparent"
+                                />
+                            </div>
+
+                            <div className="relative flex-1 min-w-[120px]">
+                                <input
+                                    type="text"
+                                    value={tagInput}
+                                    onChange={e => setTagInput(e.target.value)}
+                                    onKeyDown={e => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            if (tagInput.trim() && !tags.includes(tagInput.trim())) {
+                                                setTags([...tags, tagInput.trim()]);
+                                                setTagInput('');
+                                            }
+                                        }
+                                    }}
+                                    placeholder="Add tag & press Enter"
+                                    className="w-full px-2.5 py-1 border border-gray-200 rounded-lg text-xs font-normal text-gray-600 hover:border-gray-300 focus:border-rose-300 outline-none h-[28px] bg-transparent"
+                                />
+                            </div>
                         </div>
+
+                        {tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                                {tags.map(tag => (
+                                    <span key={tag} className="px-2 py-0.5 bg-rose-50 text-rose-600 border border-rose-100 rounded-md text-[10px] font-semibold flex items-center gap-1">
+                                        {tag}
+                                        <button type="button" onClick={() => setTags(tags.filter(t => t !== tag))} className="hover:text-rose-800">
+                                            <X className="w-2.5 h-2.5" />
+                                        </button>
+                                    </span>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
                     {/* Bottom bar */}

@@ -52,7 +52,7 @@ export default function CalendarView({ project, todos, onTodoClick }: CalendarVi
     };
 
     return (
-        <div className="flex flex-col bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden min-h-[600px]">
+        <div className="flex flex-col bg-white rounded-2xl border border-gray-100 shadow-sm w-full">
             {/* Calendar Header */}
             <div className="flex items-center justify-between p-6 border-b border-gray-100 bg-gray-50/50">
                 <h2 className="text-xl font-bold text-gray-900">{monthNames[month]} {year}</h2>
@@ -97,8 +97,8 @@ export default function CalendarView({ project, todos, onTodoClick }: CalendarVi
                                         <div className={`w-2.5 h-2.5 rounded-full ${getPriorityColor(dayTodos)}`} title={`${dayTodos.length} tasks`} />
                                     )}
                                 </div>
-                                <div className="flex-1 flex flex-col gap-1 overflow-y-auto max-h-[120px]" style={{ scrollbarWidth: 'none' }}>
-                                    {dayTodos.map(todo => (
+                                <div className="flex-1 flex flex-col gap-1.5 mt-1">
+                                    {dayTodos.slice(0, 3).map(todo => (
                                         <div 
                                             key={todo.id}
                                             onClick={() => onTodoClick?.(todo.id)}
@@ -107,6 +107,11 @@ export default function CalendarView({ project, todos, onTodoClick }: CalendarVi
                                             {todo.title}
                                         </div>
                                     ))}
+                                    {dayTodos.length > 3 && (
+                                        <div className="text-[10px] font-semibold text-gray-400 pl-1 pt-1">
+                                            + {dayTodos.length - 3} more
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         );
