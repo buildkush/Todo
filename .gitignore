@@ -50,3 +50,6 @@ coverage/
 .DS_Store
 .AppleDouble
 .LSOverride
+
+# Agents
+.agents/
