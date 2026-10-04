@@ -28,6 +28,7 @@ interface TodoItemProps {
         rect: { left: number; top: number; height: number }
     ) => void;
     isDragging?: boolean;
+    onClick?: () => void;
 }
 
 const PRIORITIES = [
@@ -50,6 +51,7 @@ export function TodoItem({
     checkIsDescendant,
     onDragOverItem,
     isDragging,
+    onClick,
 }: TodoItemProps) {
     const { projects } = useApp();
     const isPending = todo.id.startsWith('optimistic-todo-');
@@ -314,7 +316,7 @@ export function TodoItem({
                 )}
             </button>
 
-            <div className="flex-1 min-w-0" onClick={() => !isPending && setIsEditing(true)}>
+            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => !isPending && onClick?.()} onDoubleClick={() => !isPending && setIsEditing(true)}>
                 <p className={`text-sm truncate ${todo.isCompleted ? 'line-through text-gray-300' : 'text-gray-800'}`}>
                     {todo.title}
                 </p>

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Plus, LogOut, Inbox as InboxIcon, FolderOpen, PanelLeft, CheckSquare } from 'lucide-react';
+import { Plus, LogOut, Inbox as InboxIcon, FolderOpen, PanelLeft, CheckSquare, Calendar } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
@@ -143,6 +143,12 @@ export function Sidebar() {
                     icon={<InboxIcon className="w-4 h-4" />}
                     label="Inbox"
                     active={pathname === '/'}
+                />
+                <SidebarLink
+                    href="/calendar"
+                    icon={<Calendar className="w-4 h-4" />}
+                    label="Calendar"
+                    active={pathname === '/calendar'}
                 />
             </nav>
 

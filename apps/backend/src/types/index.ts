@@ -23,20 +23,22 @@ export interface PaginatedResponse<T> {
 export interface CreateProjectDto {
     name: string;
     description?: string;
-    viewType: "list" | "board";
+    viewType: "list" | "board" | "calendar";
     color?: string;
     icon?: string;
+    availableTags?: string[];
 }
 
 export interface UpdateProjectDto {
     name?: string;
     description?: string;
-    viewType?: "list" | "board";
+    viewType?: "list" | "board" | "calendar";
     color?: string;
     icon?: string;
     defaultSortOrder?: string;
     showCompletedTodos?: boolean;
     allowDragDropBetweenSections?: boolean;
+    availableTags?: string[];
 }
 
 export interface ProjectResponse {
@@ -70,6 +72,8 @@ export interface CreateTodoDto {
     priority?: "low" | "medium" | "high";
     dueDate?: string;
     order?: number;
+    tags?: string[];
+    customSections?: Record<string, any>;
 }
 
 export interface UpdateTodoDto {
@@ -82,6 +86,8 @@ export interface UpdateTodoDto {
     priority?: "low" | "medium" | "high";
     dueDate?: string;
     order?: number;
+    tags?: string[];
+    customSections?: Record<string, any>;
 }
 
 export interface TodoResponse {

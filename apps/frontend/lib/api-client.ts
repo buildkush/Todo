@@ -491,9 +491,10 @@ export interface Project {
     userId: string;
     name: string;
     description?: string;
-    viewType: 'list' | 'board';
+    viewType: 'list' | 'board' | 'calendar';
     color?: string;
     icon?: string;
+    availableTags?: string[];
     createdAt: string;
     updatedAt: string;
     deletedAt: string | null;
@@ -512,6 +513,8 @@ export interface Todo {
     order: number;
     dueDate?: string;
     priority?: 'low' | 'medium' | 'high';
+    tags?: string[];
+    customSections?: Record<string, string>;
     createdAt: string;
     updatedAt: string;
     completedAt?: string;

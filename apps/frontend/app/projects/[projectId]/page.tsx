@@ -9,9 +9,11 @@ import { useTodos } from '@/hooks/useTodos';
 import { useSections } from '@/hooks/useTodos';
 import { useApp } from '@/context/AppContext';
 import { Todo, Section } from '@/lib/api-client';
-import { ArrowLeft, Plus, MoreHorizontal, ChevronDown, ChevronRight, GripVertical } from 'lucide-react';
+import { ArrowLeft, Plus, MoreHorizontal, ChevronDown, ChevronRight, GripVertical, Calendar as CalendarIcon } from 'lucide-react';
 import Link from 'next/link';
 import BoardView from './BoardView';
+import CalendarView from './CalendarView';
+import TaskSidebar from './TaskSidebar';
 
 interface ProjectPageProps {
     params: Promise<{
@@ -47,7 +49,29 @@ export default function ProjectPage({ params }: ProjectPageProps) {
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
 
-    const handleToggleView = async (newView: 'list' | 'board') => {
+    // Sidebar state
+    const [activeTodoId, setActiveTodoId] = useState<string | null>(null);
+    const [sidebarWidth, setSidebarWidth] = useState(450);
+
+    const handleSidebarMouseDown = (e: React.MouseEvent) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startWidth = sidebarWidth;
+        
+        const handleMouseMove = (mouseEvent: MouseEvent) => {
+            const delta = startX - mouseEvent.clientX;
+            setSidebarWidth(Math.max(300, Math.min(800, startWidth + delta)));
+        };
+        const handleMouseUp = () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+        
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+    };
+
+    const handleToggleView = async (newView: 'list' | 'board' | 'calendar') => {
         try {
             await updateProject({ viewType: newView });
         } catch (err) {
@@ -854,6 +878,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                     onToggle={(id) => {
                         toggleTodo(id).catch(err => setFormError(err instanceof Error ? err.message : 'Failed to update task'));
                     }}
+                    onClick={() => setActiveTodoId(todo.id)}
                     hasChildren={children.length > 0}
                     isCollapsed={isCollapsed}
                     onToggleCollapse={() => toggleTodoCollapse(todo.id)}
@@ -909,9 +934,10 @@ export default function ProjectPage({ params }: ProjectPageProps) {
 
     return (
         <Layout>
-            <div className={`${project.viewType === 'board' ? 'w-full px-8' : 'max-w-6xl mx-auto px-6'} py-8 min-h-screen flex flex-col`}>
+            <div className="flex w-full h-[calc(100vh-64px)] relative bg-white">
+                <div className={`flex-1 flex flex-col overflow-y-auto ${project.viewType === 'board' ? 'w-full px-8' : 'max-w-6xl mx-auto px-6'} py-8 transition-all`}>
                 {/* Header */}
-                <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center justify-between mb-6 pl-12 md:pl-0">
                     <div className="flex items-center gap-3">
 
                         {editingProjectName ? (
@@ -962,6 +988,13 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                             >
                                 Board
                             </button>
+                            <button
+                                onClick={() => handleToggleView('calendar')}
+                                className={`flex items-center gap-1 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${project.viewType === 'calendar' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                            >
+                                <CalendarIcon className="w-3.5 h-3.5" />
+                                Calendar
+                            </button>
                         </div>
                         <button
                             onClick={() => openCreateTodoModal(project.id, (activeSection && activeSection !== 'unsectioned') ? activeSection : undefined)}
@@ -997,8 +1030,17 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                         deleteTodo={deleteTodo}
                         moveTodo={moveTodo}
                         addSection={addSection}
+                        updateSection={updateSection}
+                        deleteSection={deleteSection}
                         reorderSections={reorderSections}
                         openCreateTodoModal={openCreateTodoModal}
+                        onTodoClick={setActiveTodoId}
+                    />
+                ) : project.viewType === 'calendar' ? (
+                    <CalendarView 
+                        project={project}
+                        todos={todos}
+                        onTodoClick={setActiveTodoId}
                     />
                 ) : (
                     <div className="flex gap-6 items-start">
@@ -1316,6 +1358,26 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                                 <p className="text-xs text-gray-400 mt-1">Click Add Task to get started</p>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+            </div>
+            
+            {activeTodoId && (
+                <div className="flex h-[calc(100vh-64px)] bg-white shadow-[-10px_0_30px_-15px_rgba(0,0,0,0.1)] border-l border-gray-200 z-30 flex-shrink-0" style={{ width: sidebarWidth }}>
+                    <div 
+                        className="w-1.5 cursor-col-resize hover:bg-rose-400 active:bg-rose-500 transition-colors bg-transparent h-full -ml-[3px] z-10"
+                        onMouseDown={handleSidebarMouseDown} 
+                    />
+                    <div className="flex-1 h-full overflow-hidden">
+                        <TaskSidebar 
+                            todo={todos.find(t => t.id === activeTodoId)} 
+                            project={project}
+                            onClose={() => setActiveTodoId(null)}
+                            onSave={async (updates) => {
+                                await updateTodo(activeTodoId, updates);
+                            }}
+                        />
                     </div>
                 </div>
             )}

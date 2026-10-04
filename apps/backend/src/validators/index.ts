@@ -7,25 +7,27 @@ import { z } from "zod";
 export const createProjectSchema = z.object({
     name: z.string().min(1, "Name is required").max(100, "Name too long"),
     description: z.string().max(500, "Description too long").optional(),
-    viewType: z.enum(["list", "board"], {
-        errorMap: () => ({ message: 'viewType must be "list" or "board"' }),
+    viewType: z.enum(["list", "board", "calendar"], {
+        errorMap: () => ({ message: 'viewType must be "list", "board", or "calendar"' }),
     }),
     color: z
         .string()
         .regex(/^#[0-9A-F]{6}$/i, "Invalid hex color")
         .optional(),
     icon: z.string().max(50, "Icon name too long").optional(),
+    availableTags: z.array(z.string()).optional(),
 });
 
 export const updateProjectSchema = z.object({
     name: z.string().min(1).max(100).optional(),
     description: z.string().max(500).optional(),
-    viewType: z.enum(["list", "board"]).optional(),
+    viewType: z.enum(["list", "board", "calendar"]).optional(),
     color: z.string().regex(/^#[0-9A-F]{6}$/i).optional(),
     icon: z.string().max(50).optional(),
     defaultSortOrder: z.string().optional(),
     showCompletedTodos: z.boolean().optional(),
     allowDragDropBetweenSections: z.boolean().optional(),
+    availableTags: z.array(z.string()).optional(),
 });
 
 export const projectPaginationSchema = z.object({
@@ -49,6 +51,8 @@ export const createTodoSchema = z.object({
     priority: z.enum(["low", "medium", "high"]).optional(),
     dueDate: z.string().datetime().optional(),
     order: z.number().int().min(0).optional(),
+    tags: z.array(z.string()).optional(),
+    customSections: z.record(z.any()).optional(),
 });
 
 export const updateTodoSchema = z.object({
@@ -61,6 +65,8 @@ export const updateTodoSchema = z.object({
     priority: z.enum(["low", "medium", "high"]).optional(),
     dueDate: z.string().datetime().optional(),
     order: z.number().int().min(0).optional(),
+    tags: z.array(z.string()).optional(),
+    customSections: z.record(z.any()).nullable().optional(),
 });
 
 export const moveTodoSchema = z.object({

@@ -15,8 +15,11 @@ interface BoardViewProps {
     deleteTodo: (id: string) => Promise<void>;
     moveTodo: (todoId: string, sectionId?: string, boardSectionId?: string, order?: number, targetProjectId?: string) => Promise<Todo>;
     addSection: (name: string) => Promise<Section>;
+    updateSection?: (sectionId: string, updates: Partial<Section>) => Promise<Section>;
+    deleteSection?: (sectionId: string) => Promise<void>;
     reorderSections: (reorderPayload: Array<{ id: string; order: number }>) => Promise<void>;
     openCreateTodoModal: (projectId: string, sectionId?: string) => void;
+    onTodoClick?: (id: string) => void;
 }
 
 export default function BoardView({
@@ -29,12 +32,20 @@ export default function BoardView({
     deleteTodo,
     moveTodo,
     addSection,
+    updateSection,
+    deleteSection,
     reorderSections,
     openCreateTodoModal,
+    onTodoClick,
 }: BoardViewProps) {
     const [showNewSection, setShowNewSection] = useState(false);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
+
+    // Section Edit & Options State
+    const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+    const [editingSectionName, setEditingSectionName] = useState('');
+    const [sectionDropdownId, setSectionDropdownId] = useState<string | null>(null);
 
     // Drag State
     const [draggedTodoId, setDraggedTodoId] = useState<string | null>(null);
@@ -141,6 +152,27 @@ export default function BoardView({
             setTimeout(() => setSuccessMessage(null), 1500);
         } catch (err) {
             setFormError(err instanceof Error ? err.message : 'Failed to add column');
+        }
+    };
+
+    const handleEditSection = async (sectionId: string) => {
+        if (!editingSectionName.trim() || !updateSection) { setEditingSectionId(null); return; }
+        try {
+            await updateSection(sectionId, { name: editingSectionName });
+            setEditingSectionId(null);
+        } catch (err) {
+            setFormError(err instanceof Error ? err.message : 'Failed to update section');
+        }
+    };
+
+    const handleDeleteSection = async (sectionId: string) => {
+        if (!deleteSection) return;
+        if (confirm('Delete this section and all its tasks?')) {
+            try {
+                await deleteSection(sectionId);
+            } catch (err) {
+                setFormError(err instanceof Error ? err.message : 'Failed to delete section');
+            }
         }
     };
 
@@ -308,27 +340,86 @@ export default function BoardView({
             >
                 {/* Column Header */}
                 <div 
-                    draggable={!!sectionId}
+                    draggable={!!sectionId && editingSectionId !== sectionId}
                     onDragStart={(e) => sectionId && handleSectionDragStart(e, sectionId)}
-                    className={`flex items-center justify-between py-2 mb-2 select-none ${sectionId ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                    className={`flex items-center justify-between py-2 mb-2 select-none ${sectionId && editingSectionId !== sectionId ? 'cursor-grab active:cursor-grabbing' : ''}`}
                 >
-                    <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-gray-900 text-sm capitalize">{name}</span>
+                    <div className="flex items-center gap-1.5 flex-1 min-w-0 mr-2">
+                        {editingSectionId === sectionId ? (
+                            <input
+                                type="text"
+                                value={editingSectionName}
+                                onChange={e => setEditingSectionName(e.target.value)}
+                                onKeyDown={e => {
+                                    if (e.key === 'Enter') handleEditSection(sectionId as string);
+                                    if (e.key === 'Escape') setEditingSectionId(null);
+                                }}
+                                onBlur={() => setEditingSectionId(null)}
+                                autoFocus
+                                className="w-full bg-white border border-gray-200 rounded px-1.5 py-0.5 text-sm font-bold focus:outline-none focus:border-rose-300"
+                            />
+                        ) : (
+                            <span 
+                                onDoubleClick={() => {
+                                    if (sectionId) {
+                                        setEditingSectionName(name);
+                                        setEditingSectionId(sectionId);
+                                    }
+                                }}
+                                className="font-bold text-gray-900 text-sm capitalize truncate cursor-text hover:bg-gray-50 rounded px-1 transition-colors -ml-1"
+                                title={sectionId ? "Double click to edit" : ""}
+                            >
+                                {name}
+                            </span>
+                        )}
                         <span className="text-gray-400 text-xs font-normal">
                             {columnTodos.length}
                         </span>
                     </div>
                     
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 flex-shrink-0">
                         <button 
                             onClick={() => openCreateTodoModal(project.id, sectionId || undefined)}
                             className="p-1 text-gray-400 hover:text-rose-500 rounded transition-colors"
                         >
                             <Plus className="w-3.5 h-3.5" />
                         </button>
-                        <button className="p-1 text-gray-400 hover:text-gray-600 rounded transition-colors">
-                            <MoreHorizontal className="w-3.5 h-3.5" />
-                        </button>
+                        {sectionId && (
+                            <div className="relative">
+                                <button 
+                                    onClick={() => setSectionDropdownId(sectionDropdownId === sectionId ? null : sectionId)}
+                                    className="p-1 text-gray-400 hover:text-gray-600 rounded transition-colors"
+                                >
+                                    <MoreHorizontal className="w-3.5 h-3.5" />
+                                </button>
+                                {sectionDropdownId === sectionId && (
+                                    <>
+                                        <div className="fixed inset-0 z-10" onClick={() => setSectionDropdownId(null)} />
+                                        <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-20">
+                                            <button
+                                                onClick={() => {
+                                                    setEditingSectionId(sectionId);
+                                                    setEditingSectionName(name);
+                                                    setSectionDropdownId(null);
+                                                }}
+                                                className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                                            >
+                                                Edit section
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    setSectionDropdownId(null);
+                                                    handleDeleteSection(sectionId);
+                                                }}
+                                                className="w-full text-left px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50"
+                                            >
+                                                Delete section
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -346,6 +437,7 @@ export default function BoardView({
                                 
                                 <div
                                     draggable={!isPending}
+                                    onClick={() => onTodoClick?.(todo.id)}
                                     onDragStart={(e) => handleTodoDragStart(e, todo.id)}
                                     onDragEnd={(e) => {
                                         if (e.currentTarget instanceof HTMLElement) {

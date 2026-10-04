@@ -43,6 +43,7 @@ model Project {
   status                       String?   @default("active")
   color                        String?
   icon                         String?
+  availableTags                String[]  @default([])
   
   defaultSortOrder             String?   @default("manual")
   showCompletedTodos           Boolean   @default(true)
@@ -85,6 +86,8 @@ model Todo {
   
   dueDate        DateTime?
   priority       String?   // "low" | "medium" | "high"
+  tags           String[]  @default([])
+  customSections Json?
 
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
