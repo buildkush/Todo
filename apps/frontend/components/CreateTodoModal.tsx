@@ -292,8 +292,6 @@ export function CreateTodoModal() {
                 { 
                     description: description.trim() || undefined, 
                     priority,
-                    boardSectionId: createTodoModalState.mode === 'board' ? createTodoModalState.boardSectionId : undefined,
-                    parentTodoId: createTodoModalState.mode === 'subtask' ? createTodoModalState.parentId : undefined,
                     dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
                     tags: tags.length > 0 ? tags : undefined
                 }
