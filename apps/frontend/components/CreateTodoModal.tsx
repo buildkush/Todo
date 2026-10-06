@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useApp } from '@/context/AppContext';
-import { Flag, ChevronDown, Inbox, Hash, FolderOpen, X } from 'lucide-react';
+import { Flag, ChevronDown, Inbox, Hash, FolderOpen, X, Tag, Plus, Check } from 'lucide-react';
 import { apiClient, Section, Todo } from '@/lib/api-client';
 import { ErrorAlert } from './Layout';
+import { DatePicker } from './DatePicker';
 
 const PRIORITIES = [
     { value: 'high',   label: 'Priority 1', color: '#ef4444', flag: '#ef4444' },
@@ -30,9 +31,9 @@ function PriorityDropdown({ value, onChange }: { value: string; onChange: (v: 'l
             <button
                 type="button"
                 onClick={() => setOpen(!open)}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs font-normal text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition-colors"
+                className="flex items-center gap-1.5 px-2.5 border border-gray-200 rounded-lg text-xs font-normal text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition-colors h-[28px]"
             >
-                <Flag className="w-3 h-3" style={{ color: current.flag }} />
+                <Flag className="w-3.5 h-3.5" style={{ color: current.flag }} />
                 Priority
             </button>
 
@@ -158,6 +159,9 @@ export function CreateTodoModal() {
     const [dueDate, setDueDate] = useState<string>('');
     const [tags, setTags] = useState<string[]>([]);
     const [tagInput, setTagInput] = useState('');
+    const [availableTags, setAvailableTags] = useState<string[]>([]);
+    const [showTagDropdown, setShowTagDropdown] = useState(false);
+    const tagDropdownRef = useRef<HTMLDivElement>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const titleInputRef = useRef<HTMLInputElement>(null);
@@ -166,6 +170,54 @@ export function CreateTodoModal() {
     const [locationOptions, setLocationOptions] = useState<LocationOption[]>([
         { id: 'inbox', label: 'Inbox', icon: 'inbox' },
     ]);
+
+    // Close tag dropdown on click outside
+    useEffect(() => {
+        const handleClick = (e: MouseEvent) => {
+            if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) {
+                setShowTagDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, []);
+
+    // Load existing tags from projects and user todos
+    useEffect(() => {
+        if (!isCreateTodoModalOpen) {
+            setTags([]);
+            setTagInput('');
+            setShowTagDropdown(false);
+            return;
+        }
+
+        const loadExistingTags = async () => {
+            const projectTags = projects.flatMap(p => p.availableTags || []);
+            try {
+                const res = await apiClient.getTodos();
+                const todoTags = (res.data || []).flatMap((t: Todo) => t.tags || []);
+                const all = [...projectTags, ...todoTags].filter(Boolean);
+                const uniqueMap = new Map<string, string>();
+                for (const t of all) {
+                    if (!uniqueMap.has(t.toLowerCase())) {
+                        uniqueMap.set(t.toLowerCase(), t);
+                    }
+                }
+                setAvailableTags(Array.from(uniqueMap.values()));
+            } catch {
+                const all = projectTags.filter(Boolean);
+                const uniqueMap = new Map<string, string>();
+                for (const t of all) {
+                    if (!uniqueMap.has(t.toLowerCase())) {
+                        uniqueMap.set(t.toLowerCase(), t);
+                    }
+                }
+                setAvailableTags(Array.from(uniqueMap.values()));
+            }
+        };
+
+        loadExistingTags();
+    }, [isCreateTodoModalOpen, projects]);
 
     useEffect(() => {
         if (!isCreateTodoModalOpen) {
@@ -237,6 +289,10 @@ export function CreateTodoModal() {
         setTitle('');
         setDescription('');
         setPriority('low');
+        setDueDate('');
+        setTags([]);
+        setTagInput('');
+        setShowTagDropdown(false);
         setError(null);
         setTimeout(() => {
             titleInputRef.current?.focus();
@@ -275,6 +331,7 @@ export function CreateTodoModal() {
                 title: title.trim(),
                 description: description.trim() || undefined,
                 priority,
+                tags: tags.length > 0 ? tags : undefined,
                 isCompleted: false,
                 order: 0,
                 createdAt: now,
@@ -313,6 +370,54 @@ export function CreateTodoModal() {
         }
     };
 
+    const handleAddTag = (tagToAdd: string) => {
+        const trimmed = tagToAdd.trim();
+        if (!trimmed) return;
+
+        const alreadySelected = tags.some(t => t.toLowerCase() === trimmed.toLowerCase());
+        if (alreadySelected) {
+            setTagInput('');
+            setShowTagDropdown(false);
+            return;
+        }
+
+        const existingInAvailable = availableTags.find(t => t.toLowerCase() === trimmed.toLowerCase());
+        const finalTag = existingInAvailable || trimmed;
+
+        setTags(prev => [...prev, finalTag]);
+
+        if (!availableTags.some(t => t.toLowerCase() === finalTag.toLowerCase())) {
+            setAvailableTags(prev => [...prev, finalTag]);
+        }
+        setTagInput('');
+        setShowTagDropdown(false);
+    };
+
+    const handleToggleTag = (tagToToggle: string) => {
+        const trimmed = tagToToggle.trim();
+        const isSelected = tags.some(t => t.toLowerCase() === trimmed.toLowerCase());
+        if (isSelected) {
+            setTags(prev => prev.filter(t => t.toLowerCase() !== trimmed.toLowerCase()));
+        } else {
+            handleAddTag(trimmed);
+        }
+    };
+
+    const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (tagInput.trim()) {
+                handleAddTag(tagInput);
+            }
+        } else if (e.key === 'Escape') {
+            setShowTagDropdown(false);
+        }
+    };
+
+    const filteredAvailableTags = availableTags.filter(
+        t => t.toLowerCase().includes(tagInput.toLowerCase().trim())
+    );
+
     const close = () => setCreateTodoModalOpen(false);
     const canSubmit = title.trim().length > 0 && !isLoading;
 
@@ -339,50 +444,100 @@ export function CreateTodoModal() {
                             value={description}
                             onChange={e => setDescription(e.target.value)}
                             placeholder="Description"
-                            rows={1}
+                            rows={3}
                             disabled={isLoading}
-                            className="w-full text-sm text-gray-500 placeholder-gray-300 border-none outline-none bg-transparent resize-none mt-1"
+                            className="w-full text-sm text-gray-600 placeholder-gray-300 border-none outline-none bg-transparent resize-none mt-1 min-h-[72px] max-h-[110px] overflow-y-auto"
                         />
                         {/* Option chips */}
                         <div className="flex flex-wrap items-center gap-2 mt-2">
                             <PriorityDropdown value={priority} onChange={setPriority} />
                             
-                            <div className="relative">
-                                <input
-                                    type="date"
-                                    value={dueDate}
-                                    onChange={(e) => setDueDate(e.target.value)}
-                                    className="flex items-center gap-1.5 px-2.5 py-1 border border-gray-200 rounded-lg text-xs font-normal text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition-colors outline-none h-[28px] bg-transparent"
-                                />
-                            </div>
+                            <DatePicker
+                                value={dueDate}
+                                onChange={(d) => setDueDate(d || '')}
+                            />
 
-                            <div className="relative flex-1 min-w-[120px]">
-                                <input
-                                    type="text"
-                                    value={tagInput}
-                                    onChange={e => setTagInput(e.target.value)}
-                                    onKeyDown={e => {
-                                        if (e.key === 'Enter') {
-                                            e.preventDefault();
-                                            if (tagInput.trim() && !tags.includes(tagInput.trim())) {
-                                                setTags([...tags, tagInput.trim()]);
-                                                setTagInput('');
-                                            }
-                                        }
-                                    }}
-                                    placeholder="Add tag & press Enter"
-                                    className="w-full px-2.5 py-1 border border-gray-200 rounded-lg text-xs font-normal text-gray-600 hover:border-gray-300 focus:border-rose-300 outline-none h-[28px] bg-transparent"
-                                />
+                            <div className="relative flex-1 min-w-[140px]" ref={tagDropdownRef}>
+                                <div className="relative flex items-center">
+                                    <Tag className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 pointer-events-none" />
+                                    <input
+                                        type="text"
+                                        value={tagInput}
+                                        onChange={e => {
+                                            setTagInput(e.target.value);
+                                            setShowTagDropdown(true);
+                                        }}
+                                        onFocus={() => setShowTagDropdown(true)}
+                                        onClick={() => setShowTagDropdown(true)}
+                                        onKeyDown={handleTagKeyDown}
+                                        placeholder="Add tag..."
+                                        className="w-full pl-8 pr-6 py-1 border border-gray-200 rounded-lg text-xs font-normal text-gray-600 hover:border-gray-300 focus:border-rose-300 outline-none h-[28px] bg-transparent"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowTagDropdown(!showTagDropdown)}
+                                        className="absolute right-2 text-gray-400 hover:text-gray-600"
+                                    >
+                                        <ChevronDown className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+
+                                {showTagDropdown && (
+                                    <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 max-h-44 overflow-y-auto">
+                                        {filteredAvailableTags.length > 0 && (
+                                            <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                                                Existing Tags
+                                            </div>
+                                        )}
+                                        {filteredAvailableTags.map(t => {
+                                            const isSelected = tags.some(sel => sel.toLowerCase() === t.toLowerCase());
+                                            return (
+                                                <button
+                                                    key={t}
+                                                    type="button"
+                                                    onClick={() => handleToggleTag(t)}
+                                                    className={`w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium transition-colors text-left ${
+                                                        isSelected ? 'bg-rose-50/80 text-rose-600 font-semibold' : 'text-gray-700 hover:bg-rose-50 hover:text-rose-600'
+                                                    }`}
+                                                >
+                                                    <span className="flex items-center gap-1.5 truncate">
+                                                        <Tag className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                                                        {t}
+                                                    </span>
+                                                    {isSelected && <Check className="w-3.5 h-3.5 text-rose-500 flex-shrink-0" />}
+                                                </button>
+                                            );
+                                        })}
+
+                                        {tagInput.trim() && !availableTags.some(t => t.toLowerCase() === tagInput.trim().toLowerCase()) && !tags.some(t => t.toLowerCase() === tagInput.trim().toLowerCase()) && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleAddTag(tagInput)}
+                                                className="w-full text-left px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors border-t border-gray-100 flex items-center gap-1.5"
+                                            >
+                                                <Plus className="w-3.5 h-3.5 flex-shrink-0" />
+                                                Create "{tagInput.trim()}"
+                                            </button>
+                                        )}
+
+                                        {filteredAvailableTags.length === 0 && !tagInput.trim() && (
+                                            <div className="px-3 py-2 text-xs text-gray-400 text-center italic">
+                                                No existing tags found
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </div>
 
                         {tags.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-2">
+                            <div className="flex flex-wrap gap-1.5 mt-2">
                                 {tags.map(tag => (
-                                    <span key={tag} className="px-2 py-0.5 bg-rose-50 text-rose-600 border border-rose-100 rounded-md text-[10px] font-semibold flex items-center gap-1">
+                                    <span key={tag} className="flex items-center gap-1.5 px-2.5 h-[28px] bg-rose-50 text-rose-600 border border-rose-200/80 rounded-lg text-xs font-normal transition-colors">
+                                        <Tag className="w-3.5 h-3.5 text-rose-400" />
                                         {tag}
-                                        <button type="button" onClick={() => setTags(tags.filter(t => t !== tag))} className="hover:text-rose-800">
-                                            <X className="w-2.5 h-2.5" />
+                                        <button type="button" onClick={() => setTags(tags.filter(t => t !== tag))} className="hover:text-rose-800 ml-0.5 p-0.5 rounded">
+                                            <X className="w-3 h-3" />
                                         </button>
                                     </span>
                                 ))}

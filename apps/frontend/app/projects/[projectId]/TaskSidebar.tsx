@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useRef, KeyboardEvent } from 'react';
-import { X, Check, Tag, Calendar, AlertCircle, Plus, Trash2, ChevronRight, Save } from 'lucide-react';
-import { Todo } from '@/lib/api-client';
+import { X, Check, Tag, Calendar, AlertCircle, Plus, Trash2, ChevronRight, Save, Flag, CheckCircle2, Circle, Hash, FolderOpen, Edit2 } from 'lucide-react';
+import { Todo, apiClient } from '@/lib/api-client';
+import { DatePicker } from '@/components/DatePicker';
 
 interface TaskSidebarProps {
     todo: Todo | undefined;
@@ -11,12 +12,372 @@ interface TaskSidebarProps {
     onSave: (updates: Partial<Todo>) => Promise<void>;
 }
 
-export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSidebarProps) {
-    const [draftTodo, setDraftTodo] = useState<Partial<Todo>>({});
+const PRIORITIES = [
+    { value: 'high', label: 'Priority 1 (High)', flagColor: '#ef4444' },
+    { value: 'medium', label: 'Priority 2 (Medium)', flagColor: '#f59e0b' },
+    { value: 'low', label: 'Priority 3 (Low)', flagColor: '#6b7280' },
+] as const;
+
+function PrioritySelect({ value, onChange }: { value: string; onChange: (v: 'low' | 'medium' | 'high') => void }) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+    const current = PRIORITIES.find(p => p.value === value) || PRIORITIES[2];
+
+    useEffect(() => {
+        const handleClick = (e: MouseEvent) => {
+            if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, []);
+
+    return (
+        <div ref={ref} className="relative flex-1">
+            <button
+                type="button"
+                onClick={() => setOpen(!open)}
+                className="w-full flex items-center justify-between px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-medium text-gray-700 hover:border-gray-300 focus:border-rose-400 focus:ring-2 focus:ring-rose-50 transition-all h-[34px]"
+            >
+                <div className="flex items-center gap-2">
+                    <Flag className="w-3.5 h-3.5 flex-shrink-0" style={{ color: current.flagColor }} />
+                    <span className="truncate">{current.label}</span>
+                </div>
+                <ChevronRight className="w-3.5 h-3.5 text-gray-400 rotate-90 flex-shrink-0 ml-1" />
+            </button>
+
+            {open && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 animate-in fade-in duration-100">
+                    {PRIORITIES.map(p => (
+                        <button
+                            key={p.value}
+                            type="button"
+                            onClick={() => { onChange(p.value as any); setOpen(false); }}
+                            className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-gray-700 hover:bg-rose-50/50 hover:text-rose-600 transition-colors"
+                        >
+                            <div className="flex items-center gap-2">
+                                <Flag className="w-3.5 h-3.5 flex-shrink-0" style={{ color: p.flagColor }} />
+                                <span>{p.label}</span>
+                            </div>
+                            {value === p.value && <Check className="w-3.5 h-3.5 text-rose-500 flex-shrink-0" />}
+                        </button>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+/* ─── GitLab / Linear Style Inline Tag Field with Read vs Edit Mode ─── */
+function TagSelector({
+    tags,
+    availableTags,
+    onAddTag,
+    onRemoveTag,
+    onToggleTag,
+}: {
+    tags: string[];
+    availableTags: string[];
+    onAddTag: (t: string) => void;
+    onRemoveTag: (t: string) => void;
+    onToggleTag: (t: string) => void;
+}) {
     const [tagInput, setTagInput] = useState('');
+    const [isOpen, setIsOpen] = useState(false);
+    const [isEditing, setIsEditing] = useState(false);
+    const inputRef = useRef<HTMLInputElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClick = (e: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+                setIsOpen(false);
+                setIsEditing(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        return () => document.removeEventListener('mousedown', handleClick);
+    }, []);
+
+    const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (tagInput.trim()) {
+                onAddTag(tagInput.trim());
+                setTagInput('');
+            }
+        } else if (e.key === 'Backspace' && !tagInput && tags.length > 0) {
+            onRemoveTag(tags[tags.length - 1]);
+        } else if (e.key === 'Escape') {
+            setIsOpen(false);
+            setIsEditing(false);
+        }
+    };
+
+    const filteredAvailable = availableTags.filter(t =>
+        t.toLowerCase().includes(tagInput.toLowerCase().trim())
+    );
+
+    if (!isEditing) {
+        return (
+            <div
+                onClick={() => {
+                    setIsEditing(true);
+                    setIsOpen(true);
+                    setTimeout(() => inputRef.current?.focus(), 10);
+                }}
+                className="flex-1 flex flex-wrap items-center gap-1.5 min-h-[34px] cursor-pointer group/tags p-0.5"
+            >
+                {tags.map(tag => (
+                    <span
+                        key={tag}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-indigo-50/80 text-indigo-700 border border-indigo-200/80 rounded-md text-xs font-semibold shadow-sm"
+                    >
+                        <Tag className="w-3 h-3 text-indigo-400 flex-shrink-0" />
+                        <span>{tag}</span>
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onRemoveTag(tag);
+                            }}
+                            className="hover:text-indigo-900 rounded p-0.5 ml-0.5 transition-colors"
+                            title="Remove tag"
+                        >
+                            <X className="w-3 h-3 text-indigo-500" />
+                        </button>
+                    </span>
+                ))}
+                
+                <button
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setIsEditing(true);
+                        setIsOpen(true);
+                        setTimeout(() => inputRef.current?.focus(), 10);
+                    }}
+                    className="p-1 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
+                    title="Edit tags"
+                >
+                    <Edit2 className="w-3.5 h-3.5" />
+                </button>
+                
+                {tags.length === 0 && (
+                    <span className="text-xs text-gray-400 italic">No tags</span>
+                )}
+            </div>
+        );
+    }
+
+    return (
+        <div ref={containerRef} className="relative flex-1">
+            <div
+                className="flex flex-wrap items-center gap-1.5 p-1.5 bg-white border border-indigo-300 ring-2 ring-indigo-50 rounded-lg transition-all min-h-[34px] cursor-text"
+                onClick={() => inputRef.current?.focus()}
+            >
+                {/* Tag chips inside input area in Edit mode */}
+                {tags.map(tag => (
+                    <span
+                        key={tag}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50/80 text-indigo-700 border border-indigo-200/80 rounded-md text-xs font-medium transition-colors"
+                    >
+                        <Tag className="w-3 h-3 text-indigo-400 flex-shrink-0" />
+                        <span>{tag}</span>
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onRemoveTag(tag);
+                            }}
+                            className="hover:text-rose-900 rounded p-0.5 ml-0.5"
+                        >
+                            <X className="w-3 h-3" />
+                        </button>
+                    </span>
+                ))}
+
+                {/* Inline input */}
+                <input
+                    ref={inputRef}
+                    type="text"
+                    value={tagInput}
+                    onChange={(e) => {
+                        setTagInput(e.target.value);
+                        setIsOpen(true);
+                    }}
+                    onFocus={() => setIsOpen(true)}
+                    onKeyDown={handleKeyDown}
+                    placeholder={tags.length === 0 ? "Type & press Enter..." : ""}
+                    className="flex-1 min-w-[70px] bg-transparent border-none outline-none text-xs text-gray-700 placeholder-gray-400 py-0.5 px-1"
+                />
+
+                <button
+                    type="button"
+                    onClick={() => {
+                        setIsOpen(false);
+                        setIsEditing(false);
+                    }}
+                    className="p-1 text-gray-400 hover:text-gray-600 rounded"
+                    title="Done"
+                >
+                    <Check className="w-3.5 h-3.5 text-rose-500" />
+                </button>
+            </div>
+
+            {/* Filter Dropdown */}
+            {isOpen && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 max-h-48 overflow-y-auto animate-in fade-in duration-100">
+                    <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                        Select Tags
+                    </div>
+                    {filteredAvailable.map(t => {
+                        const isSelected = tags.some(sel => sel.toLowerCase() === t.toLowerCase());
+                        return (
+                            <button
+                                key={t}
+                                type="button"
+                                onClick={() => {
+                                    onToggleTag(t);
+                                    setTagInput('');
+                                }}
+                                className={`w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium transition-colors text-left ${
+                                    isSelected ? 'bg-rose-50/80 text-rose-600 font-semibold' : 'text-gray-700 hover:bg-rose-50 hover:text-rose-600'
+                                }`}
+                            >
+                                <span className="flex items-center gap-1.5 truncate">
+                                    <Tag className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                                    {t}
+                                </span>
+                                {isSelected && <Check className="w-3.5 h-3.5 text-rose-500 flex-shrink-0" />}
+                            </button>
+                        );
+                    })}
+
+                    {tagInput.trim() && !availableTags.some(t => t.toLowerCase() === tagInput.trim().toLowerCase()) && !tags.some(t => t.toLowerCase() === tagInput.trim().toLowerCase()) && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                onAddTag(tagInput.trim());
+                                setTagInput('');
+                            }}
+                            className="w-full text-left px-3 py-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-colors border-t border-gray-100 flex items-center gap-1.5"
+                        >
+                            <Plus className="w-3.5 h-3.5 flex-shrink-0" />
+                            Create "{tagInput.trim()}"
+                        </button>
+                    )}
+
+                    {filteredAvailable.length === 0 && !tagInput.trim() && (
+                        <div className="px-3 py-2 text-xs text-gray-400 text-center italic">
+                            No matching tags
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+/* ─── Description Section with Read Mode / Edit Mode + Read More ─── */
+function DescriptionSection({
+    description,
+    onChange,
+}: {
+    description: string;
+    onChange: (val: string) => void;
+}) {
+    const [isEditing, setIsEditing] = useState(false);
+    const [isExpanded, setIsExpanded] = useState(false);
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    const isLong = (description || '').length > 150 || (description || '').split('\n').length > 4;
+
+    useEffect(() => {
+        if (isEditing) {
+            setTimeout(() => textareaRef.current?.focus(), 10);
+        }
+    }, [isEditing]);
+
+    return (
+        <div className="space-y-1.5 w-full overflow-hidden">
+            <div className="flex items-center justify-between pl-0.5">
+                <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Description</h3>
+                {!isEditing && (
+                    <button
+                        type="button"
+                        onClick={() => setIsEditing(true)}
+                        className="text-xs font-semibold text-rose-600 hover:text-rose-700 hover:underline transition-colors flex items-center gap-1"
+                    >
+                        <Edit2 className="w-3 h-3" />
+                        <span>Edit</span>
+                    </button>
+                )}
+            </div>
+
+            {isEditing ? (
+                <div className="space-y-2">
+                    <textarea
+                        ref={textareaRef}
+                        value={description}
+                        onChange={(e) => onChange(e.target.value)}
+                        rows={4}
+                        className="w-full min-h-[90px] max-h-[180px] text-sm text-gray-700 bg-transparent border border-gray-200 focus:border-rose-300 focus:ring-2 focus:ring-rose-50 rounded-lg p-2.5 outline-none transition-all resize-none placeholder-gray-400 overflow-y-auto break-words"
+                        placeholder="Add a description..."
+                    />
+                    <div className="flex justify-end">
+                        <button
+                            type="button"
+                            onClick={() => setIsEditing(false)}
+                            className="px-3 py-1 text-xs font-semibold bg-rose-500 hover:bg-rose-600 text-white rounded-lg transition-colors shadow-sm"
+                        >
+                            Done
+                        </button>
+                    </div>
+                </div>
+            ) : (
+                <div
+                    onClick={() => setIsEditing(true)}
+                    className="group relative cursor-pointer px-1 py-1 rounded-lg hover:bg-gray-50/80 transition-colors w-full overflow-hidden"
+                >
+                    {description.trim() ? (
+                        <div className="w-full overflow-hidden">
+                            <p className={`text-sm text-gray-700 font-normal leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${!isExpanded && isLong ? 'line-clamp-4' : ''}`}>
+                                {description}
+                            </p>
+                            {isLong && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setIsExpanded(!isExpanded);
+                                    }}
+                                    className="text-xs font-semibold text-rose-600 hover:text-rose-700 hover:underline mt-1.5 inline-block"
+                                >
+                                    {isExpanded ? 'Show less' : 'Read more'}
+                                </button>
+                            )}
+                        </div>
+                    ) : (
+                        <p className="text-xs text-gray-400 italic">Add a description...</p>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
+export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSidebarProps) {
+    const [draftTodo, setDraftTodo] = useState<Partial<Todo>>(() => todo ? {
+        title: todo.title,
+        description: todo.description || '',
+        priority: todo.priority || 'low',
+        isCompleted: todo.isCompleted || false,
+        dueDate: todo.dueDate,
+        tags: todo.tags || [],
+        customSections: todo.customSections || {}
+    } : {});
     const [isSaving, setIsSaving] = useState(false);
-    const tagDropdownRef = useRef<HTMLDivElement>(null);
-    const [showTagDropdown, setShowTagDropdown] = useState(false);
+    const [availableTags, setAvailableTags] = useState<string[]>([]);
 
     useEffect(() => {
         if (todo) {
@@ -24,6 +385,7 @@ export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSide
                 title: todo.title,
                 description: todo.description || '',
                 priority: todo.priority || 'low',
+                isCompleted: todo.isCompleted || false,
                 dueDate: todo.dueDate,
                 tags: todo.tags || [],
                 customSections: todo.customSections || {}
@@ -31,23 +393,53 @@ export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSide
         }
     }, [todo]);
 
-    // Close tag dropdown on click outside
+    // Load project tags and all user tags from API
     useEffect(() => {
-        const handleClick = (e: MouseEvent) => {
-            if (tagDropdownRef.current && !tagDropdownRef.current.contains(e.target as Node)) {
-                setShowTagDropdown(false);
+        const loadTags = async () => {
+            const projectTags: string[] = project?.availableTags || [];
+            try {
+                const res = await apiClient.getTodos();
+                const todoTags = (res.data || []).flatMap((t: Todo) => t.tags || []);
+                const all = [...projectTags, ...todoTags].filter(Boolean);
+                const uniqueMap = new Map<string, string>();
+                for (const t of all) {
+                    if (!uniqueMap.has(t.toLowerCase())) {
+                        uniqueMap.set(t.toLowerCase(), t);
+                    }
+                }
+                setAvailableTags(Array.from(uniqueMap.values()));
+            } catch {
+                const uniqueMap = new Map<string, string>();
+                for (const t of projectTags.filter(Boolean)) {
+                    if (!uniqueMap.has(t.toLowerCase())) {
+                        uniqueMap.set(t.toLowerCase(), t);
+                    }
+                }
+                setAvailableTags(Array.from(uniqueMap.values()));
             }
         };
-        document.addEventListener('mousedown', handleClick);
-        return () => document.removeEventListener('mousedown', handleClick);
-    }, []);
+        loadTags();
+    }, [project]);
 
-    if (!todo) return null;
+    if (!todo) {
+        return (
+            <div className="flex flex-col items-center justify-center h-full p-6 text-center text-gray-500 bg-white">
+                <p className="text-xs font-medium text-gray-400 mb-3">Task details unavailable</p>
+                <button
+                    onClick={onClose}
+                    className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
+                >
+                    Close Panel
+                </button>
+            </div>
+        );
+    }
 
     const isDirty = JSON.stringify({
         title: draftTodo.title,
         description: draftTodo.description || '',
         priority: draftTodo.priority || 'low',
+        isCompleted: draftTodo.isCompleted || false,
         dueDate: draftTodo.dueDate,
         tags: draftTodo.tags || [],
         customSections: draftTodo.customSections || {}
@@ -55,6 +447,7 @@ export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSide
         title: todo.title,
         description: todo.description || '',
         priority: todo.priority || 'low',
+        isCompleted: todo.isCompleted || false,
         dueDate: todo.dueDate,
         tags: todo.tags || [],
         customSections: todo.customSections || {}
@@ -77,23 +470,33 @@ export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSide
     };
 
     const handleAddTag = (tag: string) => {
-        const currentTags = draftTodo.tags as string[] || [];
-        if (tag.trim() && !currentTags.includes(tag.trim())) {
-            updateField('tags', [...currentTags, tag.trim()]);
+        const trimmed = tag.trim();
+        if (!trimmed) return;
+        const currentTags = (draftTodo.tags as string[]) || [];
+        const exists = currentTags.some(t => t.toLowerCase() === trimmed.toLowerCase());
+        if (!exists) {
+            const existingTagInAvailable = availableTags.find(t => t.toLowerCase() === trimmed.toLowerCase());
+            const finalTag = existingTagInAvailable || trimmed;
+            updateField('tags', [...currentTags, finalTag]);
+            if (!availableTags.some(t => t.toLowerCase() === finalTag.toLowerCase())) {
+                setAvailableTags(prev => [...prev, finalTag]);
+            }
         }
-        setTagInput('');
-        setShowTagDropdown(false);
     };
 
-    const handleTagKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            handleAddTag(tagInput);
+    const handleToggleTag = (tag: string) => {
+        const currentTags = (draftTodo.tags as string[]) || [];
+        const exists = currentTags.some(t => t.toLowerCase() === tag.toLowerCase());
+        if (exists) {
+            updateField('tags', currentTags.filter(t => t.toLowerCase() !== tag.toLowerCase()));
+        } else {
+            handleAddTag(tag);
         }
     };
 
     const handleRemoveTag = (tagToRemove: string) => {
-        updateField('tags', (draftTodo.tags as string[]).filter(t => t !== tagToRemove));
+        const currentTags = (draftTodo.tags as string[]) || [];
+        updateField('tags', currentTags.filter(t => t.toLowerCase() !== tagToRemove.toLowerCase()));
     };
 
     const handleSectionChange = (key: string, value: string) => {
@@ -114,189 +517,182 @@ export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSide
     };
 
     const removeSection = (key: string) => {
-        if (confirm(`Remove section "${key}"?`)) {
-            const sections = { ...(draftTodo.customSections as Record<string, string> || {}) };
-            delete sections[key];
-            setDraftTodo(prev => ({ ...prev, customSections: sections }));
-        }
+        const sections = { ...(draftTodo.customSections as Record<string, string> || {}) };
+        delete sections[key];
+        setDraftTodo(prev => ({ ...prev, customSections: sections }));
     };
 
     return (
-        <div className="flex flex-col h-full bg-white text-gray-800 shadow-xl border-l border-gray-100">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-gray-100 flex-shrink-0 bg-white sticky top-0 z-10">
-                <div className="flex items-center gap-3">
-                    <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                        <ChevronRight className="w-5 h-5" />
+        <div className="flex flex-col h-full min-h-0 w-full max-w-full bg-white text-gray-800 select-none overflow-x-hidden">
+            {/* Header Bar */}
+            <div className="flex items-center justify-between px-4 sm:px-5 py-3.5 border-b border-gray-100 flex-shrink-0 bg-white sticky top-0 z-10 min-w-0">
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <button
+                        onClick={onClose}
+                        className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0"
+                        title="Close panel"
+                    >
+                        <ChevronRight className="w-4 h-4 hidden md:block" />
+                        <X className="w-5 h-5 md:hidden text-gray-600" />
                     </button>
-                    {isDirty && (
-                        <div className="flex items-center gap-2">
-                            <button 
-                                onClick={handleSave} 
-                                disabled={isSaving}
-                                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-sm font-semibold shadow-sm transition-colors disabled:opacity-50"
-                            >
-                                <Save className="w-4 h-4" /> {isSaving ? 'Saving...' : 'Save'}
-                            </button>
-                        </div>
+                    <div className="flex items-center gap-1.5 text-xs text-gray-500 truncate min-w-0 flex-1">
+                        <FolderOpen className="w-3.5 h-3.5 text-rose-500 flex-shrink-0" />
+                        <span className="font-semibold text-gray-700 truncate">{project?.name || 'Project'}</span>
+                    </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                    {isDirty ? (
+                        <button 
+                            onClick={handleSave} 
+                            disabled={isSaving}
+                            className="flex items-center gap-1.5 px-3 py-1 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors disabled:opacity-50"
+                        >
+                            <Save className="w-3.5 h-3.5" /> {isSaving ? 'Saving...' : 'Save'}
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                const newStatus = !draftTodo.isCompleted;
+                                updateField('isCompleted', newStatus);
+                                try {
+                                    await onSave({ isCompleted: newStatus });
+                                } catch (e) {
+                                    console.error('Failed to update completion status', e);
+                                }
+                            }}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors border ${
+                                draftTodo.isCompleted
+                                    ? 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'
+                                    : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                            }`}
+                        >
+                            {draftTodo.isCompleted ? (
+                                <>
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Done
+                                </>
+                            ) : (
+                                <>
+                                    <Circle className="w-3.5 h-3.5 text-gray-400" /> Mark Complete
+                                </>
+                            )}
+                        </button>
                     )}
                 </div>
             </div>
 
-            {/* Body */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-8" style={{ scrollbarWidth: 'thin' }}>
+            {/* Content Area */}
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 sm:px-6 py-5 space-y-6 min-w-0">
                 
-                {/* Title */}
-                <div>
+                {/* 1. Title */}
+                <div className="min-w-0">
                     <input 
                         type="text"
                         value={draftTodo.title || ''}
                         onChange={(e) => updateField('title', e.target.value)}
-                        className="w-full text-2xl font-bold text-gray-900 border-none focus:ring-0 outline-none pb-1 bg-transparent px-0 placeholder-gray-300"
+                        className="w-full text-lg sm:text-xl font-bold text-gray-900 border border-transparent hover:border-gray-200 focus:border-rose-300 focus:bg-white rounded-lg px-2 py-1 outline-none transition-all placeholder-gray-300"
                         placeholder="Task title..."
                     />
                 </div>
 
-                {/* Attributes Grid */}
-                <div className="grid grid-cols-1 gap-5 bg-gray-50/50 p-4 rounded-xl border border-gray-100">
-                    {/* Priority */}
-                    <div className="flex items-center gap-4">
-                        <div className="w-24 text-sm font-medium text-gray-500 flex items-center gap-2">
-                            <AlertCircle className="w-4 h-4 text-gray-400" /> Priority
-                        </div>
-                        <select
-                            value={draftTodo.priority as string || 'low'}
-                            onChange={(e) => updateField('priority', e.target.value)}
-                            className="flex-1 text-sm bg-white border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400/20 transition-all cursor-pointer"
-                        >
-                            <option value="low">Low</option>
-                            <option value="medium">Medium</option>
-                            <option value="high">High</option>
-                        </select>
-                    </div>
+                {/* 2. Description (Placed directly below Title!) */}
+                <DescriptionSection
+                    description={draftTodo.description || ''}
+                    onChange={(val) => updateField('description', val)}
+                />
 
-                    {/* Due Date */}
-                    <div className="flex items-center gap-4">
-                        <div className="w-24 text-sm font-medium text-gray-500 flex items-center gap-2">
-                            <Calendar className="w-4 h-4 text-gray-400" /> Date
+                {/* 3. Property Meta Grid (Priority, Due Date, Tags) */}
+                <div className="bg-gray-50/60 p-3 sm:p-3.5 rounded-xl border border-gray-100 space-y-3 min-w-0">
+                    {/* Priority Row */}
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                        <div className="w-20 shrink-0 text-xs font-semibold text-gray-500 flex items-center gap-1.5">
+                            <AlertCircle className="w-3.5 h-3.5 text-gray-400" /> Priority
                         </div>
-                        <input
-                            type="date"
-                            value={draftTodo.dueDate ? new Date(draftTodo.dueDate as any).toISOString().split('T')[0] : ''}
-                            onChange={(e) => updateField('dueDate', e.target.value ? new Date(e.target.value).toISOString() : null)}
-                            className="flex-1 text-sm bg-white border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400/20 transition-all cursor-pointer"
+                        <PrioritySelect
+                            value={draftTodo.priority as string || 'low'}
+                            onChange={(v) => updateField('priority', v)}
                         />
                     </div>
 
-                    {/* Tags */}
-                    <div className="flex items-start gap-4">
-                        <div className="w-24 text-sm font-medium text-gray-500 flex items-center gap-2 mt-2">
-                            <Tag className="w-4 h-4 text-gray-400" /> Tags
+                    {/* Date Row */}
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                        <div className="w-20 shrink-0 text-xs font-semibold text-gray-500 flex items-center gap-1.5">
+                            <Calendar className="w-3.5 h-3.5 text-gray-400" /> Due Date
                         </div>
-                        <div className="flex-1 space-y-2">
-                            <div className="flex flex-wrap gap-2">
-                                {(draftTodo.tags as string[] || []).map(tag => (
-                                    <span key={tag} className="px-2.5 py-1 bg-rose-50 text-rose-700 border border-rose-200/60 rounded-md text-xs font-semibold flex items-center gap-1.5 shadow-sm">
-                                        {tag}
-                                        <button 
-                                            onClick={() => handleRemoveTag(tag)}
-                                            className="hover:bg-rose-200 text-rose-500 hover:text-rose-800 rounded p-0.5 transition-colors"
-                                        >
-                                            <X className="w-3 h-3" />
-                                        </button>
-                                    </span>
-                                ))}
-                            </div>
-                            
-                            <div className="relative" ref={tagDropdownRef}>
-                                <input
-                                    type="text"
-                                    value={tagInput}
-                                    onChange={(e) => {
-                                        setTagInput(e.target.value);
-                                        setShowTagDropdown(true);
-                                    }}
-                                    onFocus={() => setShowTagDropdown(true)}
-                                    onKeyDown={handleTagKeyDown}
-                                    placeholder="Type & press enter..."
-                                    className="w-full text-sm bg-white border border-gray-200 rounded-lg px-3 py-1.5 outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400/20 transition-all"
-                                />
-                                {showTagDropdown && project?.availableTags && (
-                                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 max-h-40 overflow-y-auto">
-                                        {project.availableTags
-                                            .filter((t: string) => t.toLowerCase().includes(tagInput.toLowerCase()) && !(draftTodo.tags as string[] || []).includes(t))
-                                            .map((t: string) => (
-                                            <button
-                                                key={t}
-                                                onClick={() => handleAddTag(t)}
-                                                className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-                                            >
-                                                {t}
-                                            </button>
-                                        ))}
-                                        {tagInput.trim() && !project.availableTags.includes(tagInput.trim()) && (
-                                            <button
-                                                onClick={() => handleAddTag(tagInput)}
-                                                className="w-full text-left px-3 py-2 text-sm text-rose-600 font-medium hover:bg-rose-50 transition-colors border-t border-gray-100"
-                                            >
-                                                Create "{tagInput.trim()}"
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
+                        <DatePicker
+                            value={(() => {
+                                if (!draftTodo.dueDate) return '';
+                                try {
+                                    const d = new Date(draftTodo.dueDate as any);
+                                    if (isNaN(d.getTime())) return '';
+                                    return d.toISOString().split('T')[0];
+                                } catch {
+                                    return '';
+                                }
+                            })()}
+                            onChange={(d) => updateField('dueDate', d ? new Date(d).toISOString() : null)}
+                            className="flex-1 min-w-0"
+                        />
+                    </div>
+
+                    {/* Tags Row */}
+                    <div className="flex items-start gap-2 sm:gap-3 min-w-0">
+                        <div className="w-20 shrink-0 text-xs font-semibold text-gray-500 flex items-center gap-1.5 mt-2">
+                            <Tag className="w-3.5 h-3.5 text-gray-400" /> Tags
                         </div>
+                        <TagSelector
+                            tags={draftTodo.tags as string[] || []}
+                            availableTags={availableTags}
+                            onAddTag={handleAddTag}
+                            onRemoveTag={handleRemoveTag}
+                            onToggleTag={handleToggleTag}
+                        />
                     </div>
                 </div>
 
-                {/* Description */}
-                <div className="space-y-2">
-                    <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider pl-1">Description</h3>
-                    <textarea
-                        value={draftTodo.description || ''}
-                        onChange={(e) => updateField('description', e.target.value)}
-                        className="w-full min-h-[120px] text-sm text-gray-700 bg-gray-50/50 border border-gray-200 rounded-xl p-4 outline-none focus:bg-white focus:border-rose-400 focus:ring-1 focus:ring-rose-400/20 transition-all resize-y placeholder-gray-400"
-                        placeholder="Add a more detailed description..."
-                    />
-                </div>
-
-                {/* Custom Sections */}
-                <div className="pt-2">
-                    <div className="flex items-center justify-between mb-4 pl-1">
-                        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Custom Sections</h3>
+                {/* 4. Custom Sections */}
+                <div className="pt-1">
+                    <div className="flex items-center justify-between mb-3 pl-0.5">
+                        <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Custom Sections</h3>
                         <button 
                             onClick={addSection}
-                            className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-rose-600 hover:bg-rose-50 px-2 py-1.5 rounded-lg transition-colors"
+                            className="flex items-center gap-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 px-2 py-1 rounded-lg transition-colors"
                         >
                             <Plus className="w-3.5 h-3.5" /> Add Section
                         </button>
                     </div>
 
-                    <div className="space-y-6">
-                        {Object.entries(draftTodo.customSections as Record<string, string> || {}).map(([key, value]) => (
-                            <div key={key} className="group relative">
-                                <div className="flex items-center justify-between mb-2 pl-1">
-                                    <h4 className="text-sm font-semibold text-gray-700">{key}</h4>
-                                    <button 
-                                        onClick={() => removeSection(key)}
-                                        className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-rose-500 transition-opacity p-1 bg-white rounded-md hover:bg-rose-50"
-                                        title="Remove section"
-                                    >
-                                        <Trash2 className="w-4 h-4" />
-                                    </button>
+                    {Object.keys(draftTodo.customSections as Record<string, string> || {}).length === 0 ? (
+                        <div className="p-4 border border-dashed border-gray-200 rounded-xl text-center text-xs text-gray-400">
+                            No custom sections added yet
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            {Object.entries(draftTodo.customSections as Record<string, string> || {}).map(([key, value]) => (
+                                <div key={key} className="group relative bg-gray-50/40 p-3 rounded-xl border border-gray-100">
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <h4 className="text-xs font-bold text-gray-700">{key}</h4>
+                                        <button 
+                                            onClick={() => removeSection(key)}
+                                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-rose-500 transition-opacity p-1 bg-white rounded-md hover:bg-rose-50"
+                                            title="Remove section"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                    <textarea
+                                        value={value}
+                                        onChange={(e) => handleSectionChange(key, e.target.value)}
+                                        className="w-full min-h-[70px] text-xs text-gray-700 bg-white border border-gray-200 rounded-lg p-2.5 outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-50 transition-all resize-y placeholder-gray-400"
+                                        placeholder={`Write your ${key}...`}
+                                    />
                                 </div>
-                                <textarea
-                                    value={value}
-                                    onChange={(e) => handleSectionChange(key, e.target.value)}
-                                    className="w-full min-h-[80px] text-sm text-gray-700 bg-gray-50/50 border border-gray-200 rounded-xl p-4 outline-none focus:bg-white focus:border-rose-400 focus:ring-1 focus:ring-rose-400/20 transition-all resize-y placeholder-gray-400"
-                                    placeholder={`Write your ${key}...`}
-                                />
-                            </div>
-                        ))}
-                    </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
-                
-                {/* Padding at bottom */}
+
                 <div className="h-4"></div>
             </div>
         </div>

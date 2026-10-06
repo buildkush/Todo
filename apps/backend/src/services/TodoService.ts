@@ -60,6 +60,7 @@ export class TodoService {
                 description: data.description || null,
                 priority: data.priority || null,
                 dueDate: data.dueDate ? new Date(data.dueDate) : null,
+                tags: data.tags || [],
                 order,
                 isCompleted: false,
             },
@@ -200,6 +201,7 @@ export class TodoService {
                 parentTodoId: data.parentTodoId !== undefined ? data.parentTodoId : undefined,
                 priority: data.priority,
                 dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
+                tags: data.tags !== undefined ? data.tags : undefined,
                 order: targetOrder !== undefined ? targetOrder : undefined,
             },
         });
@@ -368,6 +370,7 @@ export class TodoService {
             isCompleted: todo.isCompleted,
             priority: todo.priority,
             dueDate: todo.dueDate ? todo.dueDate.toISOString() : null,
+            tags: todo.tags || [],
             order: todo.order,
             createdAt: todo.createdAt.toISOString(),
             updatedAt: todo.updatedAt.toISOString(),

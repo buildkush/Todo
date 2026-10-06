@@ -57,16 +57,7 @@ export function Layout({ children, showSidebar = true }: LayoutProps) {
                 />
             )}
             <div className="flex-1 flex flex-col overflow-hidden relative">
-                {isSidebarCollapsed && (
-                    <button
-                        onClick={toggleSidebar}
-                        className="absolute top-5 left-5 p-1.5 text-gray-400 hover:text-gray-700 hover:bg-white rounded-md transition-colors z-20"
-                        title="Open sidebar"
-                    >
-                        <PanelLeft className="w-4 h-4" />
-                    </button>
-                )}
-                <main className="flex-1 overflow-auto">
+                <main className="flex-1 flex flex-col overflow-hidden min-h-0">
                     {children}
                 </main>
             </div>
@@ -108,7 +99,7 @@ export function Sidebar() {
             `}
         >
             {/* Header */}
-            <div className="flex items-center justify-between px-4 py-4">
+            <div className="flex items-center justify-between px-4 h-14 border-b border-rose-100/30 flex-shrink-0">
                 {/* Logo */}
                 <div className="flex items-center gap-2">
                     <div className="w-6 h-6 bg-rose-500 rounded-md flex items-center justify-center flex-shrink-0">

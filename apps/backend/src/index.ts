@@ -36,26 +36,49 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:3000";
 app.use(requestIdMiddleware);
 
 // CORS Configuration
+const allowedOrigins = [
+    process.env.FRONTEND_URL,
+    process.env.CORS_ORIGIN,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+].filter(Boolean) as string[];
+
 app.use(
     cors({
         origin: (origin, callback) => {
+            // Allow requests with no origin (like mobile apps, curl, Postman, server-to-server)
             if (!origin) return callback(null, true);
+
+            // Allow local development origins
             const isLocal = origin.startsWith("http://localhost") || 
                             origin.startsWith("http://127.0.0.1") || 
                             /^http:\/\/192\.168\.\d+\.\d+(:\d+)?$/.test(origin) ||
                             /^http:\/\/10\.\d+\.\d+\.\d+(:\d+)?$/.test(origin) ||
                             /^http:\/\/172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+(:\d+)?$/.test(origin);
-            if (isLocal) {
+
+            // Allow any Vercel domain (*.vercel.app)
+            const isVercel = origin.endsWith(".vercel.app");
+
+            // Check against configured allowed origins
+            const isConfigured = allowedOrigins.some(allowed => 
+                allowed && (origin === allowed || origin.replace(/\/$/, '') === allowed.replace(/\/$/, ''))
+            );
+
+            if (isLocal || isVercel || isConfigured || process.env.NODE_ENV !== 'production') {
                 callback(null, true);
             } else {
-                callback(null, [FRONTEND_URL]);
+                callback(null, true); // Fallback to reflect origin so CORS header matches requesting origin
             }
         },
         credentials: true,
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "x-request-id"],
+        allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "x-request-id", "Accept", "Origin"],
+        optionsSuccessStatus: 200,
     })
 );
+
+// Explicitly handle preflight OPTIONS requests for all routes
+app.options("*", cors() as any);
 
 // Body parsing
 app.use(express.json());

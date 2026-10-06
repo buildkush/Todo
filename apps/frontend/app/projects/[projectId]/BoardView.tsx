@@ -167,7 +167,7 @@ export default function BoardView({
 
     const handleDeleteSection = async (sectionId: string) => {
         if (!deleteSection) return;
-        if (confirm('Delete this section and all its tasks?')) {
+        if (confirm('Are you sure you want to delete this section and all its tasks?')) {
             try {
                 await deleteSection(sectionId);
             } catch (err) {
@@ -336,7 +336,7 @@ export default function BoardView({
                 key={sectionId || 'unsectioned'}
                 onDragOver={(e) => handleSectionDragOver(e, sectionId)}
                 onDrop={(e) => draggedTodoId ? handleTodoDrop(e, sectionId) : handleSectionDrop(e, sectionId)}
-                className="flex flex-col w-[280px] flex-shrink-0 transition-all max-h-full h-full pb-6"
+                className="flex flex-col w-[290px] min-w-[290px] flex-shrink-0 transition-all h-full min-h-[300px] bg-gray-50/60 border border-gray-100/80 rounded-2xl p-3"
             >
                 {/* Column Header */}
                 <div 
@@ -424,7 +424,7 @@ export default function BoardView({
                 </div>
 
                 {/* Column Body */}
-                <div className="flex-1 overflow-y-auto py-2 space-y-3 min-h-[300px]">
+                <div className="flex-1 overflow-y-auto py-2 space-y-3 min-h-[300px] [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                     {columnTodos.map(todo => {
                         const { total, completed } = getSubtaskCount(todo.id);
                         const isDropTarget = todoDropTarget?.todoId === todo.id;
@@ -469,6 +469,21 @@ export default function BoardView({
                                             {todo.description && (
                                                 <p className="text-xs text-gray-400 mt-1.5 line-clamp-2 leading-relaxed font-normal">{todo.description}</p>
                                             )}
+                                            {todo.tags && todo.tags.length > 0 && (
+                                                <div className="flex items-center gap-1 mt-2">
+                                                    <span
+                                                        className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-md bg-indigo-50/80 text-indigo-700 border border-indigo-200/80 shadow-2xs"
+                                                        title={todo.tags.join(', ')}
+                                                    >
+                                                        <span>{todo.tags[0]}</span>
+                                                        {todo.tags.length > 1 && (
+                                                            <span className="text-[9px] font-bold px-1 py-0.2 bg-indigo-100/90 text-indigo-800 rounded">
+                                                                +{todo.tags.length - 1}
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                     
@@ -497,18 +512,20 @@ export default function BoardView({
     return (
         <div className="flex flex-col flex-1 min-h-0 bg-white">
             {/* Messages */}
-            <div className="flex-shrink-0 mb-4">
-                {formError && <ErrorAlert message={formError} onDismiss={() => setFormError(null)} />}
-                {successMessage && <SuccessAlert message={successMessage} onDismiss={() => setSuccessMessage(null)} />}
-            </div>
+            {formError || successMessage ? (
+                <div className="flex-shrink-0 mb-4">
+                    {formError && <ErrorAlert message={formError} onDismiss={() => setFormError(null)} />}
+                    {successMessage && <SuccessAlert message={successMessage} onDismiss={() => setSuccessMessage(null)} />}
+                </div>
+            ) : null}
 
             {/* Board Horizontal Scroll Area */}
             <div 
-                className="flex-1 overflow-x-auto overflow-y-hidden pb-4" 
+                className="flex-1 flex flex-col min-h-0 overflow-x-auto pb-2" 
                 ref={scrollContainerRef}
                 style={{ scrollbarWidth: 'thin' }}
             >
-                <div className="flex gap-8 h-full items-start px-1">
+                <div className="flex gap-6 flex-1 min-h-0 items-start justify-start px-1 w-full">
                     {/* General/Unsectioned Column: Only render if there are tasks with sectionId == null */}
                     {hasUnsectionedTodos && renderColumn(null, "No section")}
 
@@ -516,7 +533,7 @@ export default function BoardView({
                     {sections.map(section => renderColumn(section.id, section.name))}
 
                     {/* Add Column Button */}
-                    <div className="flex-shrink-0 w-[200px] pt-1 animate-in fade-in duration-200">
+                    <div className="flex-shrink-0 w-[200px] pt-1 animate-in fade-in duration-200 self-start text-left">
                         {!showNewSection ? (
                             <button
                                 onClick={() => setShowNewSection(true)}

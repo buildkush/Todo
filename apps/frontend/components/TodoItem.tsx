@@ -102,16 +102,16 @@ export function TodoItem({
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDrop={handleDrop}
-            className={`group flex items-center gap-2 rounded-lg px-2 -mx-2 transition-colors relative ${
+            className={`group flex items-start gap-2.5 rounded-lg px-2 -mx-2 transition-colors relative ${
                 isDragging ? 'h-0 overflow-hidden opacity-0 py-0 my-0 border-0 pointer-events-none' : 'py-2.5 hover:bg-gray-50'
             }`}
         >
-            <div className="opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 flex-shrink-0 transition-opacity">
+            <div className="opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 flex-shrink-0 transition-opacity mt-0.5">
                 <GripVertical className="w-4 h-4" />
             </div>
             
             {hasChildren && onToggleCollapse ? (
-                <button onClick={onToggleCollapse} disabled={isPending} className="text-gray-400 hover:text-gray-600 disabled:opacity-50">
+                <button onClick={onToggleCollapse} disabled={isPending} className="text-gray-400 hover:text-gray-600 disabled:opacity-50 mt-0.5">
                     {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </button>
             ) : (
@@ -121,7 +121,7 @@ export function TodoItem({
             <button
                 onClick={() => onToggle(todo.id)}
                 disabled={isPending}
-                className="flex-shrink-0 text-gray-300 hover:text-rose-400 transition-colors disabled:opacity-50"
+                className="flex-shrink-0 text-gray-300 hover:text-rose-400 transition-colors disabled:opacity-50 mt-0.5"
             >
                 {todo.isCompleted ? (
                     <CheckCircle2 className="w-4 h-4 text-rose-400 fill-rose-50" />
@@ -130,18 +130,31 @@ export function TodoItem({
                 )}
             </button>
 
-            <div className="flex-1 min-w-0 cursor-pointer" onClick={() => !isPending && onClick?.()}>
-                <p className={`text-sm truncate ${todo.isCompleted ? 'line-through text-gray-300' : 'text-gray-800'}`}>
+            <div className="flex-1 min-w-0 cursor-pointer mr-3 sm:mr-5" onClick={() => !isPending && onClick?.()}>
+                <p className={`text-sm ${todo.isCompleted ? 'line-through text-gray-300' : 'text-gray-800'}`}>
                     {todo.title}
                 </p>
                 {todo.description && (
-                    <p className={`text-xs truncate mt-0.5 ${todo.isCompleted ? 'line-through text-gray-300' : 'text-gray-400'}`}>
+                    <p className={`text-xs line-clamp-2 break-words mt-0.5 leading-relaxed ${todo.isCompleted ? 'line-through text-gray-300' : 'text-gray-400'}`}>
                         {todo.description}
                     </p>
                 )}
             </div>
 
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
+                {todo.tags && todo.tags.length > 0 && (
+                    <span
+                        className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-md bg-indigo-50/80 text-indigo-700 border border-indigo-200/80 shadow-2xs"
+                        title={todo.tags.join(', ')}
+                    >
+                        <span>{todo.tags[0]}</span>
+                        {todo.tags.length > 1 && (
+                            <span className="text-[9px] font-bold px-1 py-0.2 bg-indigo-100/90 text-indigo-800 rounded">
+                                +{todo.tags.length - 1}
+                            </span>
+                        )}
+                    </span>
+                )}
                 {todo.priority && todo.priority !== 'low' && (
                     <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${todo.priority === 'high' ? 'bg-rose-50 text-rose-500' : 'bg-amber-50 text-amber-500'}`}>
                         {todo.priority}

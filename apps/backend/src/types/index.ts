@@ -102,6 +102,7 @@ export interface TodoResponse {
     isCompleted: boolean;
     priority: string | null;
     dueDate: string | null;
+    tags?: string[];
     order: number;
     createdAt: string;
     updatedAt: string;

@@ -9,11 +9,15 @@ import { useTodos } from '@/hooks/useTodos';
 import { useSections } from '@/hooks/useTodos';
 import { useApp } from '@/context/AppContext';
 import { Todo, Section } from '@/lib/api-client';
-import { ArrowLeft, Plus, MoreHorizontal, ChevronDown, ChevronRight, GripVertical, Calendar as CalendarIcon } from 'lucide-react';
+import { ArrowLeft, Plus, MoreHorizontal, ChevronDown, ChevronRight, GripVertical, Calendar as CalendarIcon, ListTodo, Kanban, PanelLeft } from 'lucide-react';
 import Link from 'next/link';
 import BoardView from './BoardView';
 import CalendarView from './CalendarView';
 import TaskSidebar from './TaskSidebar';
+import { ProjectSearchInput } from '@/components/ProjectSearchInput';
+import { ProjectFilterPopover, FilterState, DEFAULT_FILTER_STATE } from '@/components/ProjectFilterPopover';
+import { SectionSortDropdown, SortOption } from '@/components/SectionSortDropdown';
+import { sortTodos, filterTodosBySearch, filterTodosByCriteria } from '@/lib/todo-sort';
 
 interface ProjectPageProps {
     params: Promise<{
@@ -38,7 +42,7 @@ type TodoDropTarget = {
 
 export default function ProjectPage({ params }: ProjectPageProps) {
     const { projectId } = use(params);
-    const { isSidebarCollapsed } = useApp();
+    const { isSidebarCollapsed, toggleSidebar } = useApp();
     const router = useRouter();
     const { project, loading: projectLoading, error: projectError, updateProject } = useProject(projectId);
     const { todos, loading: todosLoading, error: todosError, addTodo, updateTodo, deleteTodo, toggleTodo, moveTodo, refetch: refetchTodos } = useTodos(projectId);
@@ -49,10 +53,25 @@ export default function ProjectPage({ params }: ProjectPageProps) {
     const [showSectionForm, setShowSectionForm] = useState(false);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
+    const [viewDropdownOpen, setViewDropdownOpen] = useState(false);
+    const [sectionDropdownOpenMobile, setSectionDropdownOpenMobile] = useState(false);
+
+    // Search, Filter, and Sort state
+    const [searchQuery, setSearchQuery] = useState('');
+    const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
+    const [sectionSorts, setSectionSorts] = useState<Record<string, SortOption>>({});
 
     // Sidebar state
     const [activeTodoId, setActiveTodoId] = useState<string | null>(null);
     const [sidebarWidth, setSidebarWidth] = useState(450);
+    const [isMobile, setIsMobile] = useState(false);
+
+    useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
 
     const handleSidebarMouseDown = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -424,33 +443,46 @@ export default function ProjectPage({ params }: ProjectPageProps) {
         });
     }, [todos, draggedTodoId, getVisibleTodosForSection, getSubtreeHeight, getAncestorAtDepth, isTodoInsideSubtree]);
 
-    // Initialize collapsed state from server
+    const isSectionsInitializedRef = useRef(false);
+
+    // Initialize collapsed state from server once on load
     useEffect(() => {
-        const collapsed = new Set<string>();
-        sections.forEach(s => {
-            if (s.isCollapsed) collapsed.add(s.id);
-        });
-        setCollapsedSections(collapsed);
+        if (sections.length > 0 && !isSectionsInitializedRef.current) {
+            isSectionsInitializedRef.current = true;
+            setCollapsedSections(prev => {
+                const next = new Set(prev);
+                sections.forEach(s => {
+                    if (s.isCollapsed) next.add(s.id);
+                });
+                return next;
+            });
+        }
     }, [sections]);
 
     const toggleSectionCollapse = async (sectionId: string) => {
-        const newCollapsed = new Set(collapsedSections);
-        const isNowCollapsed = !newCollapsed.has(sectionId);
-        if (isNowCollapsed) {
-            newCollapsed.add(sectionId);
-        } else {
-            newCollapsed.delete(sectionId);
-        }
-        setCollapsedSections(newCollapsed);
+        let isNowCollapsed = false;
+        setCollapsedSections(prev => {
+            const next = new Set(prev);
+            if (next.has(sectionId)) {
+                next.delete(sectionId);
+                isNowCollapsed = false;
+            } else {
+                next.add(sectionId);
+                isNowCollapsed = true;
+            }
+            return next;
+        });
+
         if (sectionId === 'unsectioned') return;
+
         try {
             await updateSection(sectionId, { isCollapsed: isNowCollapsed });
         } catch (err) {
-            setCollapsedSections(current => {
-                const rolledBack = new Set(current);
-                if (isNowCollapsed) rolledBack.delete(sectionId);
-                else rolledBack.add(sectionId);
-                return rolledBack;
+            setCollapsedSections(prev => {
+                const next = new Set(prev);
+                if (isNowCollapsed) next.delete(sectionId);
+                else next.add(sectionId);
+                return next;
             });
             setFormError(err instanceof Error ? err.message : 'Failed to update section');
         }
@@ -458,6 +490,14 @@ export default function ProjectPage({ params }: ProjectPageProps) {
 
     const scrollToSection = (sectionId: string) => {
         setActiveSection(sectionId);
+        setCollapsedSections(prev => {
+            if (prev.has(sectionId)) {
+                const next = new Set(prev);
+                next.delete(sectionId);
+                return next;
+            }
+            return prev;
+        });
         const el = sectionRefs.current[sectionId];
         if (el) {
             el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -490,18 +530,28 @@ export default function ProjectPage({ params }: ProjectPageProps) {
         );
     }
 
-    // Group todos
-    const todoIds = new Set(todos.map(todo => todo.id));
+    // Filter todos by search query & criteria, then group/sort by section
+    const filteredTodos = filterTodosByCriteria(todos, searchQuery, filterState);
+    const todoIds = new Set(filteredTodos.map(todo => todo.id));
     const isRootOrOrphan = (todo: Todo) => !todo.parentTodoId || !todoIds.has(todo.parentTodoId);
-    const unsectionedTodos = todos.filter(t => !t.sectionId && isRootOrOrphan(t)).sort((a, b) => a.order - b.order);
+
+    const unsectionedRaw = filteredTodos.filter(t => !t.sectionId && isRootOrOrphan(t));
+    const unsectionedTodos = sortTodos(unsectionedRaw, sectionSorts['unsectioned'] || 'manual');
+
     const sortedSections = [...sections].sort((a, b) => a.order - b.order);
     const displaySections = draggedSectionId ? localSections : sortedSections;
 
-    const getTodosForSection = (sectionId: string) =>
-        todos.filter(t => t.sectionId === sectionId && isRootOrOrphan(t)).sort((a, b) => a.order - b.order);
+    const getTodosForSection = (sectionId: string) => {
+        const raw = filteredTodos.filter(t => t.sectionId === sectionId && isRootOrOrphan(t));
+        return sortTodos(raw, sectionSorts[sectionId] || 'manual');
+    };
 
-    const getSubTodos = (parentId: string) =>
-        todos.filter(t => t.parentTodoId === parentId).sort((a, b) => a.order - b.order);
+    const getSubTodos = (parentId: string) => {
+        const parent = filteredTodos.find(t => t.id === parentId);
+        const sectionId = parent?.sectionId || 'unsectioned';
+        const raw = filteredTodos.filter(t => t.parentTodoId === parentId);
+        return sortTodos(raw, sectionSorts[sectionId] || 'manual');
+    };
 
     // Handlers
     const handleUpdateTodo = async (updates: Partial<any>) => {
@@ -513,11 +563,15 @@ export default function ProjectPage({ params }: ProjectPageProps) {
     };
 
     const handleDeleteTodo = async (todoId: string) => {
-        try {
-            await deleteTodo(todoId);
-        } catch (err) {
-            setFormError(err instanceof Error ? err.message : 'Failed to delete todo');
-        }
+        const targetTodo = todos.find(t => t.id === todoId);
+        const titleText = targetTodo?.title ? `Delete "${targetTodo.title}"` : 'Delete task';
+        showConfirm(titleText, 'Are you sure you want to delete this task? This action cannot be undone.', async () => {
+            try {
+                await deleteTodo(todoId);
+            } catch (err) {
+                setFormError(err instanceof Error ? err.message : 'Failed to delete todo');
+            }
+        });
     };
 
     const handleAddSection = async (name: string) => {
@@ -530,7 +584,10 @@ export default function ProjectPage({ params }: ProjectPageProps) {
     };
 
     const handleDeleteSection = async (sectionId: string) => {
-        showConfirm('Delete section', 'Delete this section and all its tasks?', async () => {
+        if (sectionId === 'unsectioned') return;
+        const targetSection = sections.find(s => s.id === sectionId);
+        const sectionName = targetSection?.name || 'this section';
+        showConfirm('Delete section', `Are you sure you want to delete section "${sectionName}" and all its tasks?`, async () => {
             try {
                 await deleteSection(sectionId);
                 if (activeSection === sectionId) setActiveSection(null);
@@ -935,14 +992,23 @@ export default function ProjectPage({ params }: ProjectPageProps) {
 
     return (
         <Layout>
-            <div className="flex w-full h-[calc(100vh-64px)] relative bg-white">
-                <div className={`flex-1 flex flex-col overflow-y-auto ${project.viewType === 'board' ? 'w-full px-8' : 'max-w-6xl mx-auto px-6'} py-8 transition-all`}>
-                {/* Header */}
-                <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 ${isSidebarCollapsed ? 'pl-10' : 'pl-0'}`}>
-                    <div className="flex items-center gap-3">
-
+            <div className="flex w-full flex-1 min-h-0 relative bg-white overflow-hidden h-full">
+                <div className="flex-1 flex flex-col min-w-0 transition-all min-h-0 h-full w-full overflow-x-hidden">
+                {/* Header (Static Top Header Bar) */}
+                <div className="w-full shrink-0 bg-white z-10 border-b border-gray-100">
+                    <div className={`w-full ${activeTodoId ? 'max-w-none' : 'max-w-7xl mx-auto'} px-3 sm:px-6 md:px-8 h-14 flex items-center justify-between gap-3`}>
+                    <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
+                        {isSidebarCollapsed && (
+                            <button
+                                onClick={toggleSidebar}
+                                className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex-shrink-0"
+                                title="Open sidebar"
+                            >
+                                <PanelLeft className="w-4 h-4" />
+                            </button>
+                        )}
                         {editingProjectName ? (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
                                 <input
                                     type="text"
                                     value={projectNameInput}
@@ -953,45 +1019,97 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                                     }}
                                     onBlur={() => setEditingProjectName(false)}
                                     autoFocus
-                                    className="text-lg font-bold text-gray-900 bg-white border border-gray-200 rounded px-2 py-0.5 focus:outline-none focus:border-rose-300 animate-in fade-in duration-100"
+                                    className="text-base md:text-lg font-bold text-gray-900 bg-white border border-gray-200 rounded px-2 py-0.5 focus:outline-none focus:border-rose-300 animate-in fade-in duration-100 min-w-0"
                                 />
                                 <button
                                     onMouseDown={(e) => e.preventDefault()}
                                     onClick={handleEditProject}
-                                    className="px-2.5 py-1 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
+                                    className="px-2.5 py-1 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold shadow-sm transition-colors flex-shrink-0"
                                 >
                                     Save
                                 </button>
                             </div>
                         ) : (
                             <h1 
-                                className="text-lg font-bold text-gray-900 cursor-text hover:bg-gray-100 px-2 py-0.5 rounded transition-colors"
+                                className="text-base md:text-lg font-bold text-gray-900 cursor-text hover:bg-gray-100 px-2 py-0.5 rounded transition-colors truncate"
                                 onClick={() => {
                                     setProjectNameInput(project.name);
                                     setEditingProjectName(true);
                                 }}
+                                title={project.name}
                             >
                                 {project.name}
                             </h1>
                         )}
                     </div>
-                    <div className="flex flex-wrap items-center gap-3 md:gap-4 w-full md:w-auto">
-                        <div className="flex bg-gray-100 p-1 rounded-lg shrink-0">
+                    <div className="flex items-center gap-2 md:gap-3 shrink-0">
+                        {/* Search Input */}
+                        <ProjectSearchInput value={searchQuery} onChange={setSearchQuery} />
+
+                        {/* Filter Popover */}
+                        <ProjectFilterPopover todos={todos} filterState={filterState} onFilterChange={setFilterState} />
+
+                        {/* Mobile View Dropdown (< md) */}
+                        <div className="relative md:hidden">
+                            <button
+                                type="button"
+                                onClick={() => setViewDropdownOpen(!viewDropdownOpen)}
+                                className="flex items-center gap-1 p-2 sm:px-2.5 sm:py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-lg text-xs font-semibold transition-colors"
+                                title="Switch view mode"
+                            >
+                                {project.viewType === 'list' && <ListTodo className="w-4 h-4" />}
+                                {project.viewType === 'board' && <Kanban className="w-4 h-4" />}
+                                {project.viewType === 'calendar' && <CalendarIcon className="w-4 h-4" />}
+                            </button>
+                            {viewDropdownOpen && (
+                                <>
+                                    <div className="fixed inset-0 z-20" onClick={() => setViewDropdownOpen(false)} />
+                                    <div className="absolute right-0 top-full mt-1.5 w-36 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-30 animate-in fade-in duration-100">
+                                        <button
+                                            onClick={() => { handleToggleView('list'); setViewDropdownOpen(false); }}
+                                            className={`w-full flex items-center gap-2 text-left px-3 py-1.5 text-xs font-semibold ${project.viewType === 'list' ? 'text-rose-600 bg-rose-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                                        >
+                                            <ListTodo className="w-3.5 h-3.5" />
+                                            List
+                                        </button>
+                                        <button
+                                            onClick={() => { handleToggleView('board'); setViewDropdownOpen(false); }}
+                                            className={`w-full flex items-center gap-2 text-left px-3 py-1.5 text-xs font-semibold ${project.viewType === 'board' ? 'text-rose-600 bg-rose-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                                        >
+                                            <Kanban className="w-3.5 h-3.5" />
+                                            Board
+                                        </button>
+                                        <button
+                                            onClick={() => { handleToggleView('calendar'); setViewDropdownOpen(false); }}
+                                            className={`w-full flex items-center gap-2 text-left px-3 py-1.5 text-xs font-semibold ${project.viewType === 'calendar' ? 'text-rose-600 bg-rose-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                                        >
+                                            <CalendarIcon className="w-3.5 h-3.5" />
+                                            Calendar
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Desktop View Switcher (>= md) */}
+                        <div className="hidden md:flex bg-gray-100 p-1 rounded-lg shrink-0 gap-0.5">
                             <button
                                 onClick={() => handleToggleView('list')}
-                                className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${project.viewType === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${project.viewType === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
                             >
+                                <ListTodo className="w-3.5 h-3.5" />
                                 List
                             </button>
                             <button
                                 onClick={() => handleToggleView('board')}
-                                className={`px-3 py-1 rounded-md text-xs font-semibold transition-colors ${project.viewType === 'board' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${project.viewType === 'board' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
                             >
+                                <Kanban className="w-3.5 h-3.5" />
                                 Board
                             </button>
                             <button
                                 onClick={() => handleToggleView('calendar')}
-                                className={`flex items-center gap-1 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${project.viewType === 'calendar' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${project.viewType === 'calendar' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
                             >
                                 <CalendarIcon className="w-3.5 h-3.5" />
                                 Calendar
@@ -999,31 +1117,41 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                         </div>
                         <button
                             onClick={() => openCreateTodoModal(project.id, (activeSection && activeSection !== 'unsectioned') ? activeSection : undefined)}
-                            className="flex items-center gap-1 px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold transition-colors"
+                            className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold transition-colors shrink-0"
+                            title="Add task"
                         >
                             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                            Add task
+                            <span className="hidden md:inline">Add task</span>
                         </button>
+                    </div>
                     </div>
                 </div>
- 
+
                 {/* Messages */}
-                {projectError && <ErrorAlert message={projectError} />}
-                {todosError && (
-                    <div className="flex items-center gap-3 mb-3">
-                        <ErrorAlert message={todosError} />
-                        <button onClick={() => void refetchTodos()} className="text-xs font-semibold text-rose-600 hover:text-rose-700">
-                            Retry
-                        </button>
+                {(projectError || todosError || formError || successMessage) && (
+                    <div className={`w-full ${activeTodoId ? 'max-w-none' : 'max-w-7xl mx-auto'} px-6 md:px-8 pt-3`}>
+                        {projectError && <ErrorAlert message={projectError} />}
+                        {todosError && (
+                            <div className="flex items-center gap-3 mb-3">
+                                <ErrorAlert message={todosError} />
+                                <button onClick={() => void refetchTodos()} className="text-xs font-semibold text-rose-600 hover:text-rose-700">
+                                    Retry
+                                </button>
+                            </div>
+                        )}
+                        {formError && <ErrorAlert message={formError} onDismiss={() => setFormError(null)} />}
+                        {successMessage && <SuccessAlert message={successMessage} onDismiss={() => setSuccessMessage(null)} />}
                     </div>
                 )}
-                {formError && <ErrorAlert message={formError} onDismiss={() => setFormError(null)} />}
-                {successMessage && <SuccessAlert message={successMessage} onDismiss={() => setSuccessMessage(null)} />}
+
+                {/* View Content Body Container (Full-width for right-most scrollbar) */}
+                <div className={`flex-1 min-h-0 w-full ${project.viewType === 'board' ? 'flex flex-col overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
+                    <div className={`h-full ${activeTodoId || project.viewType === 'board' ? 'w-full' : 'max-w-7xl mx-auto'} px-3 sm:px-6 md:px-8 py-4 ${project.viewType === 'board' ? 'flex flex-col' : ''}`}>
  
                 {project.viewType === 'board' ? (
                     <BoardView
                         project={project}
-                        todos={todos}
+                        todos={filteredTodos}
                         sections={sections}
                         todosLoading={todosLoading}
                         sectionsLoading={sectionsLoading}
@@ -1040,13 +1168,13 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                 ) : project.viewType === 'calendar' ? (
                     <CalendarView 
                         project={project}
-                        todos={todos}
+                        todos={filteredTodos}
                         onTodoClick={setActiveTodoId}
                     />
                 ) : (
                     <div className="flex gap-6 items-start">
                     {/* ─── Sidebar ─── */}
-                    <div className="w-48 flex-shrink-0 sticky top-8">
+                    <div className="hidden md:block w-48 flex-shrink-0 sticky top-8">
                         <div className="space-y-4">
                             <div className="px-3 py-1">
                                 <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Sections</span>
@@ -1121,6 +1249,85 @@ export default function ProjectPage({ params }: ProjectPageProps) {
 
                     {/* ─── Main Content (Vertical Sections) ─── */}
                     <div className="flex-1 min-w-0">
+                        {/* Mobile Section Selector (< md) */}
+                        <div className="block md:hidden mb-4 relative">
+                            <button
+                                type="button"
+                                onClick={() => setSectionDropdownOpenMobile(!sectionDropdownOpenMobile)}
+                                className="w-full flex items-center justify-between bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl px-3.5 py-2.5 transition-colors text-left"
+                            >
+                                <span className="text-xs font-bold text-gray-900 truncate">
+                                    {activeSection === null || activeSection === 'unsectioned'
+                                        ? `General (${unsectionedTodos.length})`
+                                        : `${sections.find(s => s.id === activeSection)?.name || 'Section'} (${getTodosForSection(activeSection || '').length})`
+                                    }
+                                </span>
+                                <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0 ml-2" />
+                            </button>
+
+                            {sectionDropdownOpenMobile && (
+                                <>
+                                    <div className="fixed inset-0 z-20" onClick={() => setSectionDropdownOpenMobile(false)} />
+                                    <div className="absolute left-0 right-0 top-full mt-1.5 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-30 animate-in fade-in duration-100">
+                                        <div className="max-h-60 overflow-y-auto">
+                                            <button
+                                                onClick={() => {
+                                                    setActiveSection('unsectioned');
+                                                    scrollToSection('unsectioned');
+                                                    setSectionDropdownOpenMobile(false);
+                                                }}
+                                                className={`w-full text-left px-3.5 py-2 text-xs font-medium transition-colors ${activeSection === 'unsectioned' || activeSection === null ? 'bg-rose-50 text-rose-600 font-bold' : 'text-gray-700 hover:bg-gray-50'}`}
+                                            >
+                                                General ({unsectionedTodos.length})
+                                            </button>
+                                            {displaySections.map(section => (
+                                                <button
+                                                    key={section.id}
+                                                    onClick={() => {
+                                                        scrollToSection(section.id);
+                                                        setSectionDropdownOpenMobile(false);
+                                                    }}
+                                                    className={`w-full text-left px-3.5 py-2 text-xs font-medium transition-colors truncate ${activeSection === section.id ? 'bg-rose-50 text-rose-600 font-bold' : 'text-gray-700 hover:bg-gray-50'}`}
+                                                >
+                                                    {section.name} ({getTodosForSection(section.id).length})
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        <div className="my-1.5 border-t border-gray-100" />
+
+                                        <form
+                                            onSubmit={async (e) => {
+                                                e.preventDefault();
+                                                const form = e.currentTarget;
+                                                const input = form.elements.namedItem('newSectionName') as HTMLInputElement;
+                                                if (input && input.value.trim()) {
+                                                    const name = input.value.trim();
+                                                    await handleAddSection(name);
+                                                    input.value = '';
+                                                    setSectionDropdownOpenMobile(false);
+                                                }
+                                            }}
+                                            className="px-2.5 pt-1 pb-0.5 flex items-center gap-1.5"
+                                        >
+                                            <input
+                                                name="newSectionName"
+                                                type="text"
+                                                placeholder="+ Create section..."
+                                                className="flex-1 px-2.5 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-200 focus:bg-white placeholder-gray-400 text-gray-800 font-medium"
+                                                onClick={(e) => e.stopPropagation()}
+                                            />
+                                            <button
+                                                type="submit"
+                                                className="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold shrink-0 transition-colors shadow-sm"
+                                            >
+                                                Add
+                                            </button>
+                                        </form>
+                                    </div>
+                                </>
+                            )}
+                        </div>
                         {/* General tasks (collapsible) */}
                         <div
                             ref={el => { sectionRefs.current['unsectioned'] = el; }}
@@ -1137,21 +1344,71 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                                 }
                             }}
                         >
-                            <div className="flex items-center gap-2 py-2 border-b border-gray-200">
+                            <div className="group/header flex items-center gap-2 py-2 border-b border-gray-200">
                                 <div className="w-4 h-4 flex-shrink-0" />
                                 <button
                                     onClick={() => toggleSectionCollapse('unsectioned')}
-                                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                                    className="p-1 sm:p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                                    title={collapsedSections.has('unsectioned') ? "Expand section" : "Collapse section"}
                                 >
                                     {collapsedSections.has('unsectioned')
                                         ? <ChevronRight className="w-4 h-4" />
                                         : <ChevronDown className="w-4 h-4" />
                                     }
                                 </button>
-                                <h2 className="text-sm font-bold text-gray-800">General</h2>
+                                <h2 
+                                    onClick={() => toggleSectionCollapse('unsectioned')}
+                                    className="text-sm font-bold text-gray-800 cursor-pointer select-none hover:text-gray-900 flex-1"
+                                >
+                                    General
+                                    <span className="ml-2 text-xs font-normal text-gray-400">{unsectionedTodos.length}</span>
+                                </h2>
+
+                                {/* Section Sort */}
+                                <SectionSortDropdown
+                                    currentSort={sectionSorts['unsectioned'] || 'manual'}
+                                    onSortChange={(sort) => setSectionSorts(prev => ({ ...prev, unsectioned: sort }))}
+                                    iconOnly
+                                />
+
+                                {/* Add Task in Section */}
+                                <button
+                                    onClick={() => openCreateTodoModal(project.id, undefined)}
+                                    className="opacity-100 sm:opacity-0 sm:group-hover/header:opacity-100 p-1 text-gray-400 hover:text-rose-500 rounded transition-all"
+                                    title="Add task in section"
+                                >
+                                    <Plus className="w-4 h-4" />
+                                </button>
+
+                                {/* Options Menu for General (without Delete) */}
+                                <div className="relative">
+                                    <button
+                                        onClick={() => setSectionDropdownId(sectionDropdownId === 'unsectioned' ? null : 'unsectioned')}
+                                        className="opacity-100 sm:opacity-0 sm:group-hover/header:opacity-100 p-1 text-gray-400 hover:text-gray-700 rounded transition-all"
+                                        title="Section options"
+                                    >
+                                        <MoreHorizontal className="w-4 h-4" />
+                                    </button>
+                                    {sectionDropdownId === 'unsectioned' && (
+                                        <>
+                                            <div className="fixed inset-0 z-10" onClick={() => setSectionDropdownId(null)} />
+                                            <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-20 text-xs">
+                                                <button
+                                                    onClick={() => {
+                                                        toggleSectionCollapse('unsectioned');
+                                                        setSectionDropdownId(null);
+                                                    }}
+                                                    className="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-50 flex items-center gap-2 font-medium"
+                                                >
+                                                    {collapsedSections.has('unsectioned') ? 'Expand section' : 'Collapse section'}
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
                             </div>
                             {!collapsedSections.has('unsectioned') && (
-                                <div className="divide-y divide-gray-50 pl-6">
+                                <div className="divide-y divide-gray-50 pl-1 sm:pl-4 md:pl-6">
                                     {unsectionedTodos.filter(t => t.id !== draggedTodoId).length > 0 ? (
                                         unsectionedTodos.map(todo => renderTodo(todo))
                                     ) : (
@@ -1222,10 +1479,11 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                                                         <GripVertical className="w-4 h-4" />
                                                     </div>
 
-                                                    {/* Collapse toggle */}
+                                                    {/* Collapse toggle button */}
                                                     <button
                                                         onClick={() => toggleSectionCollapse(section.id)}
-                                                        className="text-gray-400 hover:text-gray-600 transition-colors"
+                                                        className="p-1 sm:p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                                                        title={isCollapsed ? "Expand section" : "Collapse section"}
                                                     >
                                                         {isCollapsed
                                                             ? <ChevronRight className="w-4 h-4" />
@@ -1258,11 +1516,8 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                                                         </div>
                                                     ) : (
                                                         <span 
-                                                            className="flex-1 text-sm font-bold text-gray-800 cursor-text hover:bg-gray-50 px-2 py-0.5 rounded transition-colors"
-                                                            onClick={() => {
-                                                                setEditingSectionName(section.name);
-                                                                setEditingSectionId(section.id);
-                                                            }}
+                                                            className="flex-1 text-sm font-bold text-gray-800 cursor-pointer select-none hover:text-gray-900 px-1 py-0.5 rounded transition-colors"
+                                                            onClick={() => toggleSectionCollapse(section.id)}
                                                         >
                                                             {section.name}
                                                             <span className="ml-2 text-xs font-normal text-gray-400">{sectionTodos.length}</span>
@@ -1272,16 +1527,24 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                                                     {/* Add task in section */}
                                                     <button
                                                         onClick={() => openCreateTodoModal(project.id, section.id)}
-                                                        className="opacity-0 group-hover/header:opacity-100 p-1 text-gray-400 hover:text-rose-500 rounded transition-all"
+                                                        className="opacity-100 sm:opacity-0 sm:group-hover/header:opacity-100 p-1 text-gray-400 hover:text-rose-500 rounded transition-all"
+                                                        title="Add task in section"
                                                     >
                                                         <Plus className="w-4 h-4" />
                                                     </button>
+                                                    <SectionSortDropdown
+                                                        currentSort={sectionSorts[section.id] || 'manual'}
+                                                        onSortChange={(sort) => setSectionSorts(prev => ({ ...prev, [section.id]: sort }))}
+                                                        iconOnly
+                                                    />
+
 
                                                     {/* Section options */}
                                                     <div className="relative">
                                                         <button
                                                             onClick={() => setSectionDropdownId(sectionDropdownId === section.id ? null : section.id)}
-                                                            className="opacity-0 group-hover/header:opacity-100 p-1 text-gray-400 hover:text-gray-700 rounded transition-all"
+                                                            className="opacity-100 sm:opacity-0 sm:group-hover/header:opacity-100 p-1 text-gray-400 hover:text-gray-700 rounded transition-all"
+                                                            title="Section options"
                                                         >
                                                             <MoreHorizontal className="w-4 h-4" />
                                                         </button>
@@ -1318,7 +1581,7 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                                                 {!isCollapsed && (
                                                     <div className="py-1">
                                                         {sectionTodos.filter(t => t.id !== draggedTodoId).length > 0 ? (
-                                                            <div className="divide-y divide-gray-50 pl-6">
+                                                            <div className="divide-y divide-gray-50 pl-1 sm:pl-4 md:pl-6">
                                                                 {sectionTodos.map(todo => renderTodo(todo))}
                                                             </div>
                                                         ) : (
@@ -1363,16 +1626,22 @@ export default function ProjectPage({ params }: ProjectPageProps) {
                 </div>
             )}
             </div>
+            </div>
+            </div>
             
             {activeTodoId && (
-                <div className="flex h-[calc(100vh-64px)] bg-white shadow-[-10px_0_30px_-15px_rgba(0,0,0,0.1)] border-l border-gray-200 z-30 flex-shrink-0" style={{ width: sidebarWidth }}>
+                <div 
+                    className="fixed inset-0 z-50 w-full h-full bg-white flex flex-row shadow-2xl md:relative md:inset-auto md:z-30 md:flex-shrink-0 md:self-stretch md:h-full md:min-h-0 md:border-l md:border-gray-200 md:shadow-[-10px_0_30px_-15px_rgba(0,0,0,0.1)]" 
+                    style={isMobile ? { width: '100%', height: '100%' } : { width: sidebarWidth, height: '100%', maxWidth: '100vw' }}
+                >
                     <div 
-                        className="w-1.5 cursor-col-resize hover:bg-rose-400 active:bg-rose-500 transition-colors bg-transparent h-full -ml-[3px] z-10"
+                        className="hidden md:block w-1.5 cursor-col-resize hover:bg-rose-400 active:bg-rose-500 transition-colors bg-transparent h-full -ml-[3px] z-10 flex-shrink-0"
                         onMouseDown={handleSidebarMouseDown} 
                     />
-                    <div className="flex-1 h-full overflow-hidden">
+                    <div className="flex-1 min-w-0 min-h-0 h-full w-full overflow-hidden flex flex-col relative">
                         <TaskSidebar 
-                            todo={todos.find(t => t.id === activeTodoId)} 
+                            key={activeTodoId}
+                            todo={todos.find(t => String(t.id) === String(activeTodoId))} 
                             project={project}
                             onClose={() => setActiveTodoId(null)}
                             onSave={async (updates) => {

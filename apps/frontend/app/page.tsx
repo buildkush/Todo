@@ -7,7 +7,14 @@ import { useTodos } from '@/hooks/useTodos';
 import { useSections } from '@/hooks/useTodos';
 import { useApp } from '@/context/AppContext';
 import { Todo, Section } from '@/lib/api-client';
-import { Plus, MoreHorizontal, ChevronDown, ChevronRight, GripVertical } from 'lucide-react';
+import { Plus, MoreHorizontal, ChevronDown, ChevronRight, GripVertical, PanelLeft, ListTodo, Kanban, Calendar as CalendarIcon } from 'lucide-react';
+import BoardView from './projects/[projectId]/BoardView';
+import CalendarView from './projects/[projectId]/CalendarView';
+import TaskSidebar from './projects/[projectId]/TaskSidebar';
+import { ProjectSearchInput } from '@/components/ProjectSearchInput';
+import { ProjectFilterPopover, FilterState, DEFAULT_FILTER_STATE } from '@/components/ProjectFilterPopover';
+import { SectionSortDropdown, SortOption } from '@/components/SectionSortDropdown';
+import { sortTodos, filterTodosBySearch, filterTodosByCriteria } from '@/lib/todo-sort';
 
 const MAX_TODO_DEPTH = 4; // 0-indexed, so 5 visible nesting levels.
 const TODO_INDENT_PX = 32;
@@ -50,14 +57,54 @@ function EmptyInboxIllustration() {
 
 export default function Home() {
     const projectId = 'none'; // Represent Inbox
-    const { todos, loading: todosLoading, error: todosError, updateTodo, deleteTodo, toggleTodo, refetch: refetchTodos } = useTodos(projectId);
-    const { sections, addSection, updateSection, deleteSection, reorderSections } = useSections(projectId);
-    const { openCreateTodoModal } = useApp();
+    const { todos, loading: todosLoading, error: todosError, updateTodo, deleteTodo, toggleTodo, moveTodo, refetch: refetchTodos } = useTodos(projectId);
+    const { sections, loading: sectionsLoading, addSection, updateSection, deleteSection, reorderSections } = useSections(projectId);
+    const { openCreateTodoModal, isSidebarCollapsed, toggleSidebar } = useApp();
+
+    const [viewType, setViewType] = useState<'list' | 'board' | 'calendar'>('list');
+    const [viewDropdownOpen, setViewDropdownOpen] = useState(false);
+    const [activeTodoId, setActiveTodoId] = useState<string | null>(null);
+    const [sidebarWidth, setSidebarWidth] = useState(450);
+    const [isMobile, setIsMobile] = useState(false);
+
+    useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
+
+    const handleSidebarMouseDown = (e: React.MouseEvent) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const startWidth = sidebarWidth;
+        
+        const handleMouseMove = (mouseEvent: MouseEvent) => {
+            const delta = startX - mouseEvent.clientX;
+            setSidebarWidth(Math.max(300, Math.min(800, startWidth + delta)));
+        };
+        const handleMouseUp = () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+        };
+        
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+    };
+    const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+    const [editingSectionName, setEditingSectionName] = useState('');
+    const [sectionDropdownId, setSectionDropdownId] = useState<string | null>(null);
 
     const [activeSection, setActiveSection] = useState<string | null>(null);
     const [showSectionForm, setShowSectionForm] = useState(false);
+    const [sectionDropdownOpenMobile, setSectionDropdownOpenMobile] = useState(false);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [formError, setFormError] = useState<string | null>(null);
+
+    // Search, Filter, and Sort state
+    const [searchQuery, setSearchQuery] = useState('');
+    const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER_STATE);
+    const [sectionSorts, setSectionSorts] = useState<Record<string, SortOption>>({});
 
     // Confirmation Modal State
     const [confirmModal, setConfirmModal] = useState<{
@@ -87,9 +134,6 @@ export default function Home() {
     // Section UI state
     const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
     const [collapsedTodos, setCollapsedTodos] = useState<Set<string>>(new Set());
-    const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
-    const [editingSectionName, setEditingSectionName] = useState('');
-    const [sectionDropdownId, setSectionDropdownId] = useState<string | null>(null);
 
     // Drag state
     const [draggedTodoId, setDraggedTodoId] = useState<string | null>(null);
@@ -374,33 +418,46 @@ export default function Home() {
         });
     }, [todos, draggedTodoId, getVisibleTodosForSection, getSubtreeHeight, getAncestorAtDepth, isTodoInsideSubtree]);
 
-    // Initialize collapsed states
+    const isSectionsInitializedRef = useRef(false);
+
+    // Initialize collapsed states once on load
     useEffect(() => {
-        const collapsed = new Set<string>();
-        sections.forEach(s => {
-            if (s.isCollapsed) collapsed.add(s.id);
-        });
-        setCollapsedSections(collapsed);
+        if (sections.length > 0 && !isSectionsInitializedRef.current) {
+            isSectionsInitializedRef.current = true;
+            setCollapsedSections(prev => {
+                const next = new Set(prev);
+                sections.forEach(s => {
+                    if (s.isCollapsed) next.add(s.id);
+                });
+                return next;
+            });
+        }
     }, [sections]);
 
     const toggleSectionCollapse = async (sectionId: string) => {
-        const newCollapsed = new Set(collapsedSections);
-        const isNowCollapsed = !newCollapsed.has(sectionId);
-        if (isNowCollapsed) {
-            newCollapsed.add(sectionId);
-        } else {
-            newCollapsed.delete(sectionId);
-        }
-        setCollapsedSections(newCollapsed);
+        let isNowCollapsed = false;
+        setCollapsedSections(prev => {
+            const next = new Set(prev);
+            if (next.has(sectionId)) {
+                next.delete(sectionId);
+                isNowCollapsed = false;
+            } else {
+                next.add(sectionId);
+                isNowCollapsed = true;
+            }
+            return next;
+        });
+
         if (sectionId === 'unsectioned') return;
+
         try {
             await updateSection(sectionId, { isCollapsed: isNowCollapsed });
         } catch (err) {
-            setCollapsedSections(current => {
-                const rolledBack = new Set(current);
-                if (isNowCollapsed) rolledBack.delete(sectionId);
-                else rolledBack.add(sectionId);
-                return rolledBack;
+            setCollapsedSections(prev => {
+                const next = new Set(prev);
+                if (isNowCollapsed) next.delete(sectionId);
+                else next.add(sectionId);
+                return next;
             });
             setFormError(err instanceof Error ? err.message : 'Failed to update section');
         }
@@ -408,23 +465,42 @@ export default function Home() {
 
     const scrollToSection = (sectionId: string) => {
         setActiveSection(sectionId);
+        setCollapsedSections(prev => {
+            if (prev.has(sectionId)) {
+                const next = new Set(prev);
+                next.delete(sectionId);
+                return next;
+            }
+            return prev;
+        });
         const el = sectionRefs.current[sectionId];
         if (el) {
             el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     };
 
-    const todoIds = new Set(todos.map(todo => todo.id));
+    // Filter todos by search query & criteria, then group/sort by section
+    const filteredTodos = filterTodosByCriteria(todos, searchQuery, filterState);
+    const todoIds = new Set(filteredTodos.map(todo => todo.id));
     const isRootOrOrphan = (todo: Todo) => !todo.parentTodoId || !todoIds.has(todo.parentTodoId);
-    const unsectionedTodos = todos.filter(t => !t.sectionId && isRootOrOrphan(t)).sort((a, b) => a.order - b.order);
+
+    const unsectionedRaw = filteredTodos.filter(t => !t.sectionId && isRootOrOrphan(t));
+    const unsectionedTodos = sortTodos(unsectionedRaw, sectionSorts['unsectioned'] || 'manual');
+
     const sortedSections = [...sections].sort((a, b) => a.order - b.order);
     const displaySections = draggedSectionId ? localSections : sortedSections;
 
-    const getTodosForSection = (sectionId: string) =>
-        todos.filter(t => t.sectionId === sectionId && isRootOrOrphan(t)).sort((a, b) => a.order - b.order);
+    const getTodosForSection = (sectionId: string) => {
+        const raw = filteredTodos.filter(t => t.sectionId === sectionId && isRootOrOrphan(t));
+        return sortTodos(raw, sectionSorts[sectionId] || 'manual');
+    };
 
-    const getSubTodos = (parentId: string) =>
-        todos.filter(t => t.parentTodoId === parentId).sort((a, b) => a.order - b.order);
+    const getSubTodos = (parentId: string) => {
+        const parent = filteredTodos.find(t => t.id === parentId);
+        const sectionId = parent?.sectionId || 'unsectioned';
+        const raw = filteredTodos.filter(t => t.parentTodoId === parentId);
+        return sortTodos(raw, sectionSorts[sectionId] || 'manual');
+    };
 
     const handleUpdateTodo = async (updates: Partial<any>) => {
         try {
@@ -435,11 +511,15 @@ export default function Home() {
     };
 
     const handleDeleteTodo = async (todoId: string) => {
-        try {
-            await deleteTodo(todoId);
-        } catch (err) {
-            setFormError(err instanceof Error ? err.message : 'Failed to delete todo');
-        }
+        const targetTodo = todos.find(t => t.id === todoId);
+        const titleText = targetTodo?.title ? `Delete "${targetTodo.title}"` : 'Delete task';
+        showConfirm(titleText, 'Are you sure you want to delete this task? This action cannot be undone.', async () => {
+            try {
+                await deleteTodo(todoId);
+            } catch (err) {
+                setFormError(err instanceof Error ? err.message : 'Failed to delete todo');
+            }
+        });
     };
 
     const handleAddSection = async (name: string) => {
@@ -452,7 +532,10 @@ export default function Home() {
     };
 
     const handleDeleteSection = async (sectionId: string) => {
-        showConfirm('Delete section', 'Delete this section and all its tasks?', async () => {
+        if (sectionId === 'unsectioned') return;
+        const targetSection = sections.find(s => s.id === sectionId);
+        const sectionName = targetSection?.name || 'this section';
+        showConfirm('Delete section', `Are you sure you want to delete section "${sectionName}" and all its tasks?`, async () => {
             try {
                 await deleteSection(sectionId);
                 if (activeSection === sectionId) setActiveSection(null);
@@ -819,337 +902,623 @@ export default function Home() {
 
     return (
         <Layout>
-            <div className="max-w-6xl mx-auto px-6 py-8 min-h-screen flex flex-col">
-                {/* Alerts */}
-                {todosError && (
-                    <div className="flex items-center gap-3 mb-3">
-                        <ErrorAlert message={todosError} />
-                        <button onClick={() => void refetchTodos()} className="text-xs font-semibold text-rose-600 hover:text-rose-700">
-                            Retry
-                        </button>
-                    </div>
-                )}
-                {formError && <ErrorAlert message={formError} onDismiss={() => setFormError(null)} />}
-                {successMessage && <SuccessAlert message={successMessage} onDismiss={() => setSuccessMessage(null)} />}
-
-                {/* Header */}
-                <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-3">
-                        <h1 className="text-lg font-bold text-gray-900">Inbox</h1>
-                    </div>
-                    <button
-                        onClick={() => openCreateTodoModal('none', (activeSection && activeSection !== 'unsectioned') ? activeSection : undefined)}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold transition-colors"
-                    >
-                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                        Add task
-                    </button>
-                </div>
-
-                <div className="flex gap-6 items-start flex-1">
-                    {/* Sidebar */}
-                    <div className="w-48 flex-shrink-0 sticky top-8">
-                        <div className="space-y-4">
-                            <div className="px-3 py-1">
-                                <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Sections</span>
-                            </div>
-                            <div className="space-y-0.5">
+            <div className="flex w-full flex-1 min-h-0 relative bg-white overflow-hidden h-full">
+                <div className="flex-1 flex flex-col min-w-0 transition-all min-h-0 h-full w-full overflow-x-hidden">
+                {/* Header (Static Top Header Bar) */}
+                <div className="w-full shrink-0 bg-white z-10 border-b border-gray-100">
+                    <div className={`w-full ${activeTodoId ? 'max-w-none' : 'max-w-7xl mx-auto'} px-3 sm:px-6 md:px-8 h-14 flex items-center justify-between gap-3`}>
+                        <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
+                            {isSidebarCollapsed && (
                                 <button
-                                    onClick={() => { setActiveSection('unsectioned'); scrollToSection('unsectioned'); }}
-                                    className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors ${activeSection === 'unsectioned' || activeSection === null
-                                        ? 'bg-rose-50 text-rose-600 border-l-2 border-rose-500 rounded-l-none'
-                                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                                    }`}
+                                    onClick={toggleSidebar}
+                                    className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors flex-shrink-0"
+                                    title="Open sidebar"
                                 >
-                                    General ({unsectionedTodos.length})
+                                    <PanelLeft className="w-4 h-4" />
                                 </button>
+                            )}
+                            <h1 className="text-base md:text-lg font-bold text-gray-900 truncate" title="Inbox">
+                                Inbox
+                            </h1>
+                        </div>
 
-                                {displaySections.map(section => (
-                                    <div key={section.id} className="group/nav flex items-center">
-                                        <button
-                                            onClick={() => scrollToSection(section.id)}
-                                            className={`flex-1 text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors truncate ${activeSection === section.id
-                                                ? 'bg-rose-50 text-rose-600 border-l-2 border-rose-500 rounded-l-none'
-                                                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                                            }`}
-                                        >
-                                            {section.name} ({getTodosForSection(section.id).length})
-                                        </button>
-                                        <button
-                                            onClick={() => handleDeleteSection(section.id)}
-                                            className="opacity-0 group-hover/nav:opacity-100 p-1.5 text-gray-400 hover:text-rose-500 rounded transition-opacity"
-                                            title="Delete section"
-                                        >
-                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                            </svg>
-                                        </button>
-                                    </div>
-                                ))}
+                        <div className="flex items-center gap-2 md:gap-3 shrink-0">
+                            {/* Search Input */}
+                            <ProjectSearchInput value={searchQuery} onChange={setSearchQuery} />
 
-                                {!showSectionForm ? (
-                                    <button
-                                        onClick={() => setShowSectionForm(true)}
-                                        className="w-full px-3 py-2 text-left text-xs font-semibold text-rose-500 hover:bg-rose-50/50 rounded-lg transition-colors"
-                                    >
-                                        + New Section
-                                    </button>
-                                ) : (
-                                    <form
-                                        onSubmit={e => {
-                                            e.preventDefault();
-                                            const input = (e.currentTarget.elements as any)[0];
-                                            handleAddSection(input.value);
-                                            input.value = '';
-                                        }}
-                                        className="p-1 space-y-2"
-                                    >
-                                        <input
-                                            type="text"
-                                            placeholder="Section name..."
-                                            required
-                                            className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-200 placeholder-gray-300"
-                                            autoFocus
-                                        />
-                                        <div className="flex gap-1.5">
-                                            <button type="submit" className="flex-1 py-1 bg-rose-500 hover:bg-rose-600 text-white rounded-md text-[10px] font-semibold">Add</button>
-                                            <button type="button" onClick={() => setShowSectionForm(false)} className="flex-1 py-1 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-md text-[10px] font-semibold">Cancel</button>
+                            {/* Filter Popover */}
+                            <ProjectFilterPopover todos={todos} filterState={filterState} onFilterChange={setFilterState} />
+
+                            {/* Mobile View Dropdown (< md) */}
+                            <div className="relative md:hidden">
+                                <button
+                                    type="button"
+                                    onClick={() => setViewDropdownOpen(!viewDropdownOpen)}
+                                    className="flex items-center gap-1 p-2 sm:px-2.5 sm:py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-lg text-xs font-semibold transition-colors"
+                                    title="Switch view mode"
+                                >
+                                    {viewType === 'list' && <ListTodo className="w-4 h-4" />}
+                                    {viewType === 'board' && <Kanban className="w-4 h-4" />}
+                                    {viewType === 'calendar' && <CalendarIcon className="w-4 h-4" />}
+                                </button>
+                                {viewDropdownOpen && (
+                                    <>
+                                        <div className="fixed inset-0 z-20" onClick={() => setViewDropdownOpen(false)} />
+                                        <div className="absolute right-0 top-full mt-1.5 w-36 bg-white rounded-xl shadow-lg border border-gray-100 py-1 z-30 animate-in fade-in duration-100">
+                                            <button
+                                                onClick={() => { setViewType('list'); setViewDropdownOpen(false); }}
+                                                className={`w-full flex items-center gap-2 text-left px-3 py-1.5 text-xs font-semibold ${viewType === 'list' ? 'text-rose-600 bg-rose-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                                            >
+                                                <ListTodo className="w-3.5 h-3.5" />
+                                                List
+                                            </button>
+                                            <button
+                                                onClick={() => { setViewType('board'); setViewDropdownOpen(false); }}
+                                                className={`w-full flex items-center gap-2 text-left px-3 py-1.5 text-xs font-semibold ${viewType === 'board' ? 'text-rose-600 bg-rose-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                                            >
+                                                <Kanban className="w-3.5 h-3.5" />
+                                                Board
+                                            </button>
+                                            <button
+                                                onClick={() => { setViewType('calendar'); setViewDropdownOpen(false); }}
+                                                className={`w-full flex items-center gap-2 text-left px-3 py-1.5 text-xs font-semibold ${viewType === 'calendar' ? 'text-rose-600 bg-rose-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                                            >
+                                                <CalendarIcon className="w-3.5 h-3.5" />
+                                                Calendar
+                                            </button>
                                         </div>
-                                    </form>
+                                    </>
                                 )}
                             </div>
-                        </div>
-                    </div>
 
-                    {/* Main Content */}
-                    <div className="flex-1 min-w-0 flex flex-col h-full">
-                        {todosLoading ? (
-                            <div className="flex-1 flex items-center justify-center py-16">
-                                <LoadingSpinner />
-                            </div>
-                        ) : todos.length === 0 && sections.length === 0 ? (
-                            <div className="flex-1 flex flex-col items-center justify-center text-center py-16">
-                                <EmptyInboxIllustration />
-                                <p className="text-sm font-semibold text-gray-800 mt-6 mb-1">
-                                    Collect Now. Connect Later.
-                                </p>
-                                <p className="text-xs text-gray-400 max-w-xs leading-relaxed mb-6">
-                                    Gather ideas in seconds and turn them into organized projects when the moment is right.
-                                </p>
+                            {/* Desktop View Switcher (>= md) */}
+                            <div className="hidden md:flex bg-gray-100 p-1 rounded-lg shrink-0 gap-0.5">
                                 <button
-                                    onClick={() => openCreateTodoModal('none')}
-                                    className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold transition-colors"
+                                    onClick={() => setViewType('list')}
+                                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${viewType === 'list' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
                                 >
-                                    <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                                    Add a task
+                                    <ListTodo className="w-3.5 h-3.5" />
+                                    List
+                                </button>
+                                <button
+                                    onClick={() => setViewType('board')}
+                                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${viewType === 'board' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                                >
+                                    <Kanban className="w-3.5 h-3.5" />
+                                    Board
+                                </button>
+                                <button
+                                    onClick={() => setViewType('calendar')}
+                                    className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition-colors ${viewType === 'calendar' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-900'}`}
+                                >
+                                    <CalendarIcon className="w-3.5 h-3.5" />
+                                    Calendar
                                 </button>
                             </div>
+
+                            <button
+                                onClick={() => openCreateTodoModal('none', (activeSection && activeSection !== 'unsectioned') ? activeSection : undefined)}
+                                className="flex items-center gap-1 px-2.5 sm:px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold transition-colors shrink-0"
+                                title="Add task"
+                            >
+                                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                                <span className="hidden md:inline">Add task</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Alerts */}
+                {(todosError || formError || successMessage) && (
+                    <div className={`w-full ${activeTodoId ? 'max-w-none' : 'max-w-7xl mx-auto'} px-6 md:px-8 pt-3`}>
+                        {todosError && (
+                            <div className="flex items-center gap-3 mb-3">
+                                <ErrorAlert message={todosError} />
+                                <button onClick={() => void refetchTodos()} className="text-xs font-semibold text-rose-600 hover:text-rose-700">
+                                    Retry
+                                </button>
+                            </div>
+                        )}
+                        {formError && <ErrorAlert message={formError} onDismiss={() => setFormError(null)} />}
+                        {successMessage && <SuccessAlert message={successMessage} onDismiss={() => setSuccessMessage(null)} />}
+                    </div>
+                )}
+
+                {/* View Content Body Container */}
+                <div className={`flex-1 min-h-0 w-full ${viewType === 'board' ? 'flex flex-col overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
+                    <div className={`h-full ${activeTodoId || viewType === 'board' ? 'w-full' : 'max-w-7xl mx-auto'} px-3 sm:px-6 md:px-8 py-4 ${viewType === 'board' ? 'flex flex-col' : ''}`}>
+
+                        {viewType === 'board' ? (
+                            <BoardView
+                                project={{ id: 'inbox', name: 'Inbox', viewType }}
+                                todos={filteredTodos}
+                                sections={sections}
+                                todosLoading={todosLoading}
+                                sectionsLoading={sectionsLoading}
+                                updateTodo={updateTodo}
+                                deleteTodo={deleteTodo}
+                                moveTodo={moveTodo}
+                                addSection={addSection}
+                                updateSection={updateSection}
+                                deleteSection={deleteSection}
+                                reorderSections={reorderSections}
+                                openCreateTodoModal={openCreateTodoModal}
+                                onTodoClick={setActiveTodoId}
+                            />
+                        ) : viewType === 'calendar' ? (
+                            <CalendarView 
+                                project={{ id: 'inbox', name: 'Inbox', viewType }}
+                                todos={filteredTodos}
+                                onTodoClick={setActiveTodoId}
+                            />
                         ) : (
-                            <>
-                                {/* General tasks */}
-                                <div
-                                    ref={el => { sectionRefs.current['unsectioned'] = el; }}
-                                    className="mb-8 transition-colors"
-                                    onDragOver={(e) => handleSectionDragOver(e, 'unsectioned')}
-                                    onDragLeave={handleSectionDragLeave}
-                                    onDrop={(e) => {
-                                        const activeTarget = dropTargetRef.current;
-                                        if (activeTarget && draggedTodoId) {
-                                            e.preventDefault();
-                                            handleTodoDrop(activeTarget.todoId, draggedTodoId, activeTarget.position);
-                                        } else {
-                                            handleSectionDrop(e, 'unsectioned');
-                                        }
-                                    }}
-                                >
-                                    <div className="flex items-center gap-2 py-2 border-b border-gray-200">
-                                        <div className="w-4 h-4 flex-shrink-0" />
-                                        <button
-                                            onClick={() => toggleSectionCollapse('unsectioned')}
-                                            className="text-gray-400 hover:text-gray-600 transition-colors"
-                                        >
-                                            {collapsedSections.has('unsectioned') ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                                        </button>
-                                        <h2 className="text-sm font-bold text-gray-800">General</h2>
-                                    </div>
-                                    {!collapsedSections.has('unsectioned') && (
-                                        <div className="divide-y divide-gray-50 pl-6">
-                                            {unsectionedTodos.filter(t => t.id !== draggedTodoId).length > 0 ? (
-                                                unsectionedTodos.map(todo => renderTodo(todo))
-                                            ) : (
-                                                (!dragOverSectionId || dragOverSectionId !== 'unsectioned' || draggedSectionId) && (
-                                                    <div className="h-[70px] flex items-center justify-center text-xs text-gray-300">
-                                                        No tasks in General
-                                                    </div>
-                                                )
-                                            )}
-                                            {dragOverSectionId === 'unsectioned' && !draggedSectionId && (
-                                                <div className="py-2">
-                                                    <DropIndicatorLine indentOffset={0} />
+                            <div className="flex gap-6 items-start">
+                                {/* ─── Sidebar ─── */}
+                                <div className="hidden md:block w-48 flex-shrink-0 sticky top-8">
+                                    <div className="space-y-4">
+                                        <div className="px-3 py-1">
+                                            <span className="text-[10px] font-semibold uppercase tracking-widest text-gray-400">Sections</span>
+                                        </div>
+                                        <div className="space-y-0.5">
+                                            <button
+                                                onClick={() => { setActiveSection('unsectioned'); scrollToSection('unsectioned'); }}
+                                                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors ${activeSection === 'unsectioned' || activeSection === null
+                                                    ? 'bg-rose-50 text-rose-600 border-l-2 border-rose-500 rounded-l-none'
+                                                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                                                }`}
+                                            >
+                                                General ({unsectionedTodos.length})
+                                            </button>
+
+                                            {displaySections.map(section => (
+                                                <div key={section.id} className="group/nav flex items-center">
+                                                    <button
+                                                        onClick={() => scrollToSection(section.id)}
+                                                        className={`flex-1 text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors truncate ${activeSection === section.id
+                                                            ? 'bg-rose-50 text-rose-600 border-l-2 border-rose-500 rounded-l-none'
+                                                            : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                                                        }`}
+                                                    >
+                                                        {section.name} ({getTodosForSection(section.id).length})
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleDeleteSection(section.id)}
+                                                        className="opacity-0 group-hover/nav:opacity-100 p-1.5 text-gray-400 hover:text-rose-500 rounded transition-opacity"
+                                                        title="Delete section"
+                                                    >
+                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                        </svg>
+                                                    </button>
                                                 </div>
+                                            ))}
+
+                                            {!showSectionForm ? (
+                                                <button
+                                                    onClick={() => setShowSectionForm(true)}
+                                                    className="w-full px-3 py-2 text-left text-xs font-semibold text-rose-500 hover:bg-rose-50/50 rounded-lg transition-colors"
+                                                >
+                                                    + New Section
+                                                </button>
+                                            ) : (
+                                                <form
+                                                    onSubmit={e => {
+                                                        e.preventDefault();
+                                                        const input = (e.currentTarget.elements as any)[0];
+                                                        handleAddSection(input.value);
+                                                        input.value = '';
+                                                    }}
+                                                    className="p-1 space-y-2"
+                                                >
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Section name..."
+                                                        required
+                                                        className="w-full px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-200 placeholder-gray-300"
+                                                        autoFocus
+                                                    />
+                                                    <div className="flex gap-1.5">
+                                                        <button type="submit" className="flex-1 py-1 bg-rose-500 hover:bg-rose-600 text-white rounded-md text-[10px] font-semibold">Add</button>
+                                                        <button type="button" onClick={() => setShowSectionForm(false)} className="flex-1 py-1 bg-gray-100 hover:bg-gray-200 text-gray-500 rounded-md text-[10px] font-semibold">Cancel</button>
+                                                    </div>
+                                                </form>
                                             )}
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
 
-                                {/* Sections */}
-                                {displaySections.map(section => {
-                                    const sectionTodos = getTodosForSection(section.id);
-                                    const isCollapsed = collapsedSections.has(section.id);
-                                    const isDragged = section.id === draggedSectionId;
+                                {/* ─── Main Content (Vertical Sections) ─── */}
+                                <div className="flex-1 min-w-0">
+                                    {/* Mobile Section Selector (< md) */}
+                                    <div className="block md:hidden mb-4 relative">
+                                        <button
+                                            type="button"
+                                            onClick={() => setSectionDropdownOpenMobile(!sectionDropdownOpenMobile)}
+                                            className="w-full flex items-center justify-between bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl px-3.5 py-2.5 transition-colors text-left"
+                                        >
+                                            <span className="text-xs font-bold text-gray-900 truncate">
+                                                {activeSection === null || activeSection === 'unsectioned'
+                                                    ? `General (${unsectionedTodos.length})`
+                                                    : `${sections.find(s => s.id === activeSection)?.name || 'Section'} (${getTodosForSection(activeSection || '').length})`
+                                                }
+                                            </span>
+                                            <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0 ml-2" />
+                                        </button>
 
-                                    return (
-                                        <div key={section.id} className="relative group/section" id={`section-${section.id}`}>
+                                        {sectionDropdownOpenMobile && (
+                                            <>
+                                                <div className="fixed inset-0 z-20" onClick={() => setSectionDropdownOpenMobile(false)} />
+                                                <div className="absolute left-0 right-0 top-full mt-1.5 bg-white rounded-xl shadow-xl border border-gray-100 py-2 z-30 animate-in fade-in duration-100">
+                                                    <div className="max-h-60 overflow-y-auto">
+                                                        <button
+                                                            onClick={() => {
+                                                                setActiveSection('unsectioned');
+                                                                scrollToSection('unsectioned');
+                                                                setSectionDropdownOpenMobile(false);
+                                                            }}
+                                                            className={`w-full text-left px-3.5 py-2 text-xs font-medium transition-colors ${activeSection === 'unsectioned' || activeSection === null ? 'bg-rose-50 text-rose-600 font-bold' : 'text-gray-700 hover:bg-gray-50'}`}
+                                                        >
+                                                            General ({unsectionedTodos.length})
+                                                        </button>
+                                                        {displaySections.map(section => (
+                                                            <button
+                                                                key={section.id}
+                                                                onClick={() => {
+                                                                    scrollToSection(section.id);
+                                                                    setSectionDropdownOpenMobile(false);
+                                                                }}
+                                                                className={`w-full text-left px-3.5 py-2 text-xs font-medium transition-colors truncate ${activeSection === section.id ? 'bg-rose-50 text-rose-600 font-bold' : 'text-gray-700 hover:bg-gray-50'}`}
+                                                            >
+                                                                {section.name} ({getTodosForSection(section.id).length})
+                                                            </button>
+                                                        ))}
+                                                    </div>
+
+                                                    <div className="my-1.5 border-t border-gray-100" />
+
+                                                    <form
+                                                        onSubmit={async (e) => {
+                                                            e.preventDefault();
+                                                            const form = e.currentTarget;
+                                                            const input = form.elements.namedItem('newSectionName') as HTMLInputElement;
+                                                            if (input && input.value.trim()) {
+                                                                const name = input.value.trim();
+                                                                await handleAddSection(name);
+                                                                input.value = '';
+                                                                setSectionDropdownOpenMobile(false);
+                                                            }
+                                                        }}
+                                                        className="px-2.5 pt-1 pb-0.5 flex items-center gap-1.5"
+                                                    >
+                                                        <input
+                                                            name="newSectionName"
+                                                            type="text"
+                                                            placeholder="+ Create section..."
+                                                            className="flex-1 px-2.5 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-200 focus:bg-white placeholder-gray-400 text-gray-800 font-medium"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        />
+                                                        <button
+                                                            type="submit"
+                                                            className="px-3 py-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold shrink-0 transition-colors shadow-sm"
+                                                        >
+                                                            Add
+                                                        </button>
+                                                    </form>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+
+                                    {todosLoading ? (
+                                        <div className="flex-1 flex items-center justify-center py-16">
+                                            <LoadingSpinner />
+                                        </div>
+                                    ) : todos.length === 0 && sections.length === 0 ? (
+                                        <div className="flex-1 flex flex-col items-center justify-center text-center py-16">
+                                            <EmptyInboxIllustration />
+                                            <p className="text-sm font-semibold text-gray-800 mt-6 mb-1">
+                                                Collect Now. Connect Later.
+                                            </p>
+                                            <p className="text-xs text-gray-400 max-w-xs leading-relaxed mb-6">
+                                                Gather ideas in seconds and turn them into organized projects when the moment is right.
+                                            </p>
+                                            <button
+                                                onClick={() => openCreateTodoModal('none')}
+                                                className="flex items-center gap-1.5 px-3.5 py-2 bg-rose-500 hover:bg-rose-600 text-white rounded-lg text-xs font-semibold transition-colors"
+                                            >
+                                                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                                                Add a task
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            {/* General tasks */}
                                             <div
-                                                ref={el => { sectionRefs.current[section.id] = el; }}
-                                                draggable={editingSectionId !== section.id}
-                                                onDragStart={(e) => handleSectionReorderDragStart(e, section.id, section.name)}
-                                                onDragEnd={handleSectionReorderDragEnd}
-                                                className={`mb-6 transition-all ${isDragged ? 'bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl h-20 w-full' : ''}`}
-                                                onDragOver={(e) => {
-                                                    if (draggedSectionId) {
-                                                        handleSectionReorderDragOver(e, section.id);
-                                                    } else {
-                                                        handleSectionDragOver(e, section.id);
-                                                    }
-                                                }}
+                                                ref={el => { sectionRefs.current['unsectioned'] = el; }}
+                                                className="mb-8 transition-colors"
+                                                onDragOver={(e) => handleSectionDragOver(e, 'unsectioned')}
                                                 onDragLeave={handleSectionDragLeave}
                                                 onDrop={(e) => {
-                                                    const dragSecId = draggedSectionId || e.dataTransfer.getData('sectionId');
-                                                    if (dragSecId) {
+                                                    const activeTarget = dropTargetRef.current;
+                                                    if (activeTarget && draggedTodoId) {
                                                         e.preventDefault();
+                                                        handleTodoDrop(activeTarget.todoId, draggedTodoId, activeTarget.position);
                                                     } else {
-                                                        const activeTarget = dropTargetRef.current;
-                                                        if (activeTarget && draggedTodoId) {
-                                                            e.preventDefault();
-                                                            handleTodoDrop(activeTarget.todoId, draggedTodoId, activeTarget.position);
-                                                        } else {
-                                                            handleSectionDrop(e, section.id);
-                                                        }
+                                                        handleSectionDrop(e, 'unsectioned');
                                                     }
                                                 }}
                                             >
-                                                {!isDragged && (
-                                                    <>
-                                                        <div className="group/header flex items-center gap-2 py-2 border-b border-gray-200">
-                                                            <div className="opacity-0 group-hover/header:opacity-100 cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 transition-opacity">
-                                                                <GripVertical className="w-4 h-4" />
-                                                            </div>
-                                                            <button
-                                                                onClick={() => toggleSectionCollapse(section.id)}
-                                                                className="text-gray-400 hover:text-gray-600 transition-colors"
-                                                            >
-                                                                {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                                                            </button>
+                                                <div className="group/header flex items-center gap-2 py-2 border-b border-gray-200">
+                                                    <div className="w-4 h-4 flex-shrink-0" />
+                                                    <button
+                                                        onClick={() => toggleSectionCollapse('unsectioned')}
+                                                        className="p-1 sm:p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                                                        title={collapsedSections.has('unsectioned') ? "Expand section" : "Collapse section"}
+                                                    >
+                                                        {collapsedSections.has('unsectioned') ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                                    </button>
+                                                    <h2 
+                                                        onClick={() => toggleSectionCollapse('unsectioned')}
+                                                        className="text-sm font-bold text-gray-800 cursor-pointer select-none hover:text-gray-900 flex-1"
+                                                    >
+                                                        General
+                                                        <span className="ml-2 text-xs font-normal text-gray-400">{unsectionedTodos.length}</span>
+                                                    </h2>
 
-                                                            {editingSectionId === section.id ? (
-                                                                <div className="flex items-center gap-2 flex-1 animate-in fade-in duration-100">
-                                                                    <input
-                                                                        type="text"
-                                                                        value={editingSectionName}
-                                                                        onChange={e => setEditingSectionName(e.target.value)}
-                                                                        onKeyDown={e => {
-                                                                            if (e.key === 'Enter') handleEditSection(section.id);
-                                                                            if (e.key === 'Escape') setEditingSectionId(null);
-                                                                        }}
-                                                                        onBlur={() => setEditingSectionId(null)}
-                                                                        autoFocus
-                                                                        className="flex-1 bg-white border border-gray-200 rounded px-2 py-0.5 text-sm font-bold focus:outline-none focus:border-rose-300"
-                                                                    />
+                                                    {/* Section Sort */}
+                                                    <SectionSortDropdown
+                                                        currentSort={sectionSorts['unsectioned'] || 'manual'}
+                                                        onSortChange={(sort) => setSectionSorts(prev => ({ ...prev, unsectioned: sort }))}
+                                                        iconOnly
+                                                    />
+
+                                                    {/* Add Task in Section */}
+                                                    <button
+                                                        onClick={() => openCreateTodoModal('none', undefined)}
+                                                        className="opacity-100 sm:opacity-0 sm:group-hover/header:opacity-100 p-1 text-gray-400 hover:text-rose-500 rounded transition-all"
+                                                        title="Add task in section"
+                                                    >
+                                                        <Plus className="w-4 h-4" />
+                                                    </button>
+
+                                                    {/* Options Menu for General (without Delete) */}
+                                                    <div className="relative">
+                                                        <button
+                                                            onClick={() => setSectionDropdownId(sectionDropdownId === 'unsectioned' ? null : 'unsectioned')}
+                                                            className="opacity-100 sm:opacity-0 sm:group-hover/header:opacity-100 p-1 text-gray-400 hover:text-gray-700 rounded transition-all"
+                                                            title="Section options"
+                                                        >
+                                                            <MoreHorizontal className="w-4 h-4" />
+                                                        </button>
+                                                        {sectionDropdownId === 'unsectioned' && (
+                                                            <>
+                                                                <div className="fixed inset-0 z-10" onClick={() => setSectionDropdownId(null)} />
+                                                                <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-20 text-xs">
                                                                     <button
-                                                                        onMouseDown={(e) => e.preventDefault()}
-                                                                        onClick={() => handleEditSection(section.id)}
-                                                                        className="px-2.5 py-1 bg-rose-500 hover:bg-rose-600 text-white rounded text-xs font-semibold shadow-sm transition-colors"
+                                                                        onClick={() => {
+                                                                            toggleSectionCollapse('unsectioned');
+                                                                            setSectionDropdownId(null);
+                                                                        }}
+                                                                        className="w-full text-left px-3 py-1.5 text-gray-700 hover:bg-gray-50 flex items-center gap-2 font-medium"
                                                                     >
-                                                                        Save
+                                                                        {collapsedSections.has('unsectioned') ? 'Expand section' : 'Collapse section'}
                                                                     </button>
                                                                 </div>
-                                                            ) : (
-                                                                <span
-                                                                    className="flex-1 text-sm font-bold text-gray-800 cursor-text hover:bg-gray-50 px-2 py-0.5 rounded transition-colors"
-                                                                    onClick={() => {
-                                                                        setEditingSectionName(section.name);
-                                                                        setEditingSectionId(section.id);
-                                                                    }}
-                                                                >
-                                                                    {section.name}
-                                                                    <span className="ml-2 text-xs font-normal text-gray-400">{sectionTodos.length}</span>
-                                                                </span>
-                                                            )}
-
-                                                            <button
-                                                                onClick={() => openCreateTodoModal('none', section.id)}
-                                                                className="opacity-0 group-hover/header:opacity-100 p-1 text-gray-400 hover:text-rose-500 rounded transition-all"
-                                                            >
-                                                                <Plus className="w-4 h-4" />
-                                                            </button>
-
-                                                            <div className="relative">
-                                                                <button
-                                                                    onClick={() => setSectionDropdownId(sectionDropdownId === section.id ? null : section.id)}
-                                                                    className="opacity-0 group-hover/header:opacity-100 p-1 text-gray-400 hover:text-gray-700 rounded transition-all"
-                                                                >
-                                                                    <MoreHorizontal className="w-4 h-4" />
-                                                                </button>
-                                                                {sectionDropdownId === section.id && (
-                                                                    <>
-                                                                        <div className="fixed inset-0 z-10" onClick={() => setSectionDropdownId(null)} />
-                                                                        <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-20">
-                                                                            <button
-                                                                                onClick={() => {
-                                                                                    setEditingSectionId(section.id);
-                                                                                    setEditingSectionName(section.name);
-                                                                                    setSectionDropdownId(null);
-                                                                                }}
-                                                                                className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
-                                                                            >
-                                                                                Edit section
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => {
-                                                                                    setSectionDropdownId(null);
-                                                                                    handleDeleteSection(section.id);
-                                                                                }}
-                                                                                className="w-full text-left px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50"
-                                                                            >
-                                                                                Delete section
-                                                                            </button>
-                                                                        </div>
-                                                                    </>
-                                                                )}
-                                                            </div>
-                                                        </div>
-
-                                                        {!isCollapsed && (
-                                                            <div className="py-1">
-                                                                {sectionTodos.filter(t => t.id !== draggedTodoId).length > 0 ? (
-                                                                    <div className="divide-y divide-gray-50 pl-6">
-                                                                        {sectionTodos.map(todo => renderTodo(todo))}
-                                                                    </div>
-                                                                ) : (
-                                                                    (!dragOverSectionId || dragOverSectionId !== section.id || draggedSectionId) && (
-                                                                        <div className="h-[70px] flex items-center justify-center text-xs text-gray-300">
-                                                                            No tasks in this section
-                                                                        </div>
-                                                                    )
-                                                                )}
-                                                                {dragOverSectionId === section.id && !draggedSectionId && (
-                                                                    <div className="pl-6 py-2">
-                                                                        <DropIndicatorLine indentOffset={0} />
-                                                                    </div>
-                                                                )}
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {!collapsedSections.has('unsectioned') && (
+                                                    <div className="divide-y divide-gray-50 pl-1 sm:pl-4 md:pl-6">
+                                                        {unsectionedTodos.filter(t => t.id !== draggedTodoId).length > 0 ? (
+                                                            unsectionedTodos.map(todo => renderTodo(todo))
+                                                        ) : (
+                                                            (!dragOverSectionId || dragOverSectionId !== 'unsectioned' || draggedSectionId) && (
+                                                                <div className="h-[70px] flex items-center justify-center text-xs text-gray-300">
+                                                                    No tasks in General
+                                                                </div>
+                                                            )
+                                                        )}
+                                                        {dragOverSectionId === 'unsectioned' && !draggedSectionId && (
+                                                            <div className="py-2">
+                                                                <DropIndicatorLine indentOffset={0} />
                                                             </div>
                                                         )}
-                                                    </>
+                                                    </div>
                                                 )}
                                             </div>
-                                        </div>
-                                    );
-                                })}
-                            </>
+
+                                            {/* Sections */}
+                                            {displaySections.map(section => {
+                                                const sectionTodos = getTodosForSection(section.id);
+                                                const isCollapsed = collapsedSections.has(section.id);
+                                                const isDragged = section.id === draggedSectionId;
+
+                                                return (
+                                                    <div key={section.id} className="relative group/section" id={`section-${section.id}`}>
+                                                        <div
+                                                            ref={el => { sectionRefs.current[section.id] = el; }}
+                                                            draggable={editingSectionId !== section.id}
+                                                            onDragStart={(e) => handleSectionReorderDragStart(e, section.id, section.name)}
+                                                            onDragEnd={handleSectionReorderDragEnd}
+                                                            className={`mb-6 transition-all ${isDragged ? 'bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl h-20 w-full' : ''}`}
+                                                            onDragOver={(e) => {
+                                                                if (draggedSectionId) {
+                                                                    handleSectionReorderDragOver(e, section.id);
+                                                                } else {
+                                                                    handleSectionDragOver(e, section.id);
+                                                                }
+                                                            }}
+                                                            onDragLeave={handleSectionDragLeave}
+                                                            onDrop={(e) => {
+                                                                const dragSecId = draggedSectionId || e.dataTransfer.getData('sectionId');
+                                                                if (dragSecId) {
+                                                                    e.preventDefault();
+                                                                } else {
+                                                                    const activeTarget = dropTargetRef.current;
+                                                                    if (activeTarget && draggedTodoId) {
+                                                                        e.preventDefault();
+                                                                        handleTodoDrop(activeTarget.todoId, draggedTodoId, activeTarget.position);
+                                                                    } else {
+                                                                        handleSectionDrop(e, section.id);
+                                                                    }
+                                                                }
+                                                            }}
+                                                        >
+                                                            {!isDragged && (
+                                                                <>
+                                                                    <div className="group/header flex items-center gap-2 py-2 border-b border-gray-200">
+                                                                        <div className="opacity-0 group-hover/header:opacity-100 cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 transition-opacity">
+                                                                            <GripVertical className="w-4 h-4" />
+                                                                        </div>
+                                                                        <button
+                                                                            onClick={() => toggleSectionCollapse(section.id)}
+                                                                            className="p-1 sm:p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                                                                            title={isCollapsed ? "Expand section" : "Collapse section"}
+                                                                        >
+                                                                            {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                                                        </button>
+
+                                                                        {editingSectionId === section.id ? (
+                                                                            <div className="flex items-center gap-2 flex-1 animate-in fade-in duration-100">
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={editingSectionName}
+                                                                                    onChange={e => setEditingSectionName(e.target.value)}
+                                                                                    onKeyDown={e => {
+                                                                                        if (e.key === 'Enter') handleEditSection(section.id);
+                                                                                        if (e.key === 'Escape') setEditingSectionId(null);
+                                                                                    }}
+                                                                                    onBlur={() => setEditingSectionId(null)}
+                                                                                    autoFocus
+                                                                                    className="flex-1 bg-white border border-gray-200 rounded px-2 py-0.5 text-sm font-bold focus:outline-none focus:border-rose-300"
+                                                                                />
+                                                                                <button
+                                                                                    onMouseDown={(e) => e.preventDefault()}
+                                                                                    onClick={() => handleEditSection(section.id)}
+                                                                                    className="px-2.5 py-1 bg-rose-500 hover:bg-rose-600 text-white rounded text-xs font-semibold shadow-sm transition-colors"
+                                                                                >
+                                                                                    Save
+                                                                                </button>
+                                                                            </div>
+                                                                        ) : (
+                                                                            <span
+                                                                                className="flex-1 text-sm font-bold text-gray-800 cursor-pointer select-none hover:text-gray-900 px-1 py-0.5 rounded transition-colors"
+                                                                                onClick={() => toggleSectionCollapse(section.id)}
+                                                                            >
+                                                                                {section.name}
+                                                                                <span className="ml-2 text-xs font-normal text-gray-400">{sectionTodos.length}</span>
+                                                                            </span>
+                                                                        )}
+
+                                                                        <button
+                                                                            onClick={() => openCreateTodoModal('none', section.id)}
+                                                                            className="opacity-100 sm:opacity-0 sm:group-hover/header:opacity-100 p-1 text-gray-400 hover:text-rose-500 rounded transition-all"
+                                                                            title="Add task in section"
+                                                                        >
+                                                                            <Plus className="w-4 h-4" />
+                                                                        </button>
+                                                                        <SectionSortDropdown
+                                                                            currentSort={sectionSorts[section.id] || 'manual'}
+                                                                            onSortChange={(sort) => setSectionSorts(prev => ({ ...prev, [section.id]: sort }))}
+                                                                            iconOnly
+                                                                        />
+
+
+                                                                        <div className="relative">
+                                                                            <button
+                                                                                onClick={() => setSectionDropdownId(sectionDropdownId === section.id ? null : section.id)}
+                                                                                className="opacity-100 sm:opacity-0 sm:group-hover/header:opacity-100 p-1 text-gray-400 hover:text-gray-700 rounded transition-all"
+                                                                                title="Section options"
+                                                                            >
+                                                                                <MoreHorizontal className="w-4 h-4" />
+                                                                            </button>
+                                                                            {sectionDropdownId === section.id && (
+                                                                                <>
+                                                                                    <div className="fixed inset-0 z-10" onClick={() => setSectionDropdownId(null)} />
+                                                                                    <div className="absolute right-0 top-full mt-1 w-36 bg-white rounded-lg shadow-lg border border-gray-100 py-1 z-20">
+                                                                                        <button
+                                                                                            onClick={() => {
+                                                                                                setEditingSectionId(section.id);
+                                                                                                setEditingSectionName(section.name);
+                                                                                                setSectionDropdownId(null);
+                                                                                            }}
+                                                                                            className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50"
+                                                                                        >
+                                                                                            Edit section
+                                                                                        </button>
+                                                                                        <button
+                                                                                            onClick={() => {
+                                                                                                setSectionDropdownId(null);
+                                                                                                handleDeleteSection(section.id);
+                                                                                            }}
+                                                                                            className="w-full text-left px-3 py-1.5 text-xs text-rose-600 hover:bg-rose-50"
+                                                                                        >
+                                                                                            Delete section
+                                                                                        </button>
+                                                                                    </div>
+                                                                                </>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {!isCollapsed && (
+                                                                        <div className="py-1">
+                                                                            {sectionTodos.filter(t => t.id !== draggedTodoId).length > 0 ? (
+                                                                                <div className="divide-y divide-gray-50 pl-1 sm:pl-4 md:pl-6">
+                                                                                    {sectionTodos.map(todo => renderTodo(todo))}
+                                                                                </div>
+                                                                            ) : (
+                                                                                (!dragOverSectionId || dragOverSectionId !== section.id || draggedSectionId) && (
+                                                                                    <div className="h-[70px] flex items-center justify-center text-xs text-gray-300">
+                                                                                        No tasks in this section
+                                                                                    </div>
+                                                                                )
+                                                                            )}
+                                                                            {dragOverSectionId === section.id && !draggedSectionId && (
+                                                                                <div className="pl-6 py-2">
+                                                                                    <DropIndicatorLine indentOffset={0} />
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </>
+                                    )}
+                                </div>
+                            </div>
                         )}
                     </div>
                 </div>
+            
+            {activeTodoId && (
+                <div 
+                    className="fixed inset-0 z-50 w-full h-full bg-white flex flex-row shadow-2xl md:relative md:inset-auto md:z-30 md:flex-shrink-0 md:self-stretch md:h-full md:min-h-0 md:border-l md:border-gray-200 md:shadow-[-10px_0_30px_-15px_rgba(0,0,0,0.1)]" 
+                    style={isMobile ? { width: '100%', height: '100%' } : { width: sidebarWidth, height: '100%', maxWidth: '100vw' }}
+                >
+                    <div 
+                        className="hidden md:block w-1.5 cursor-col-resize hover:bg-rose-400 active:bg-rose-500 transition-colors bg-transparent h-full -ml-[3px] z-10 flex-shrink-0"
+                        onMouseDown={handleSidebarMouseDown} 
+                    />
+                    <div className="flex-1 min-w-0 min-h-0 h-full w-full overflow-hidden flex flex-col relative">
+                        <TaskSidebar 
+                            key={activeTodoId}
+                            todo={todos.find(t => String(t.id) === String(activeTodoId))} 
+                            project={{ id: 'inbox', name: 'Inbox', viewType }}
+                            onClose={() => setActiveTodoId(null)}
+                            onSave={async (updates) => {
+                                await updateTodo(activeTodoId, updates);
+                            }}
+                        />
+                    </div>
+                </div>
+            )}
+            </div>
             </div>
 
             {/* Custom Confirmation Modal */}
