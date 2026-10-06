@@ -103,6 +103,7 @@ export interface TodoResponse {
     priority: string | null;
     dueDate: string | null;
     tags?: string[];
+    customSections?: Record<string, any> | null;
     order: number;
     createdAt: string;
     updatedAt: string;

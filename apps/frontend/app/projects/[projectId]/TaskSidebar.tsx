@@ -366,6 +366,108 @@ function DescriptionSection({
     );
 }
 
+/* ─── Custom Section Item Component (View Mode / Inline Edit Mode) ─── */
+function CustomSectionItem({
+    sectionKey,
+    value,
+    onChange,
+    onRemove,
+}: {
+    sectionKey: string;
+    value: string;
+    onChange: (oldKey: string, newKey: string, newValue: string) => void;
+    onRemove: (key: string) => void;
+}) {
+    const [isEditing, setIsEditing] = useState(false);
+    const [editName, setEditName] = useState(sectionKey);
+    const [editValue, setEditValue] = useState(value);
+
+    useEffect(() => {
+        setEditName(sectionKey);
+        setEditValue(value);
+    }, [sectionKey, value]);
+
+    const handleSave = () => {
+        const trimmedName = editName.trim();
+        const trimmedVal = editValue.trim();
+        if (!trimmedName || !trimmedVal) return;
+        onChange(sectionKey, trimmedName, trimmedVal);
+        setIsEditing(false);
+    };
+
+    if (isEditing) {
+        return (
+            <div className="p-3 bg-gray-50/70 rounded-xl border border-gray-200 space-y-2.5">
+                <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                        Section Name
+                    </label>
+                    <input
+                        type="text"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className="w-full text-xs font-semibold text-gray-800 bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-50"
+                        autoFocus
+                    />
+                </div>
+                <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                        Section Description
+                    </label>
+                    <textarea
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        rows={4}
+                        className="w-full max-h-[110px] text-xs text-gray-700 bg-white border border-gray-200 rounded-lg p-2.5 outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-50 transition-all resize-none overflow-y-auto placeholder-gray-400"
+                    />
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                    <button
+                        type="button"
+                        onClick={() => onRemove(sectionKey)}
+                        className="text-xs font-medium text-rose-500 hover:text-rose-700 flex items-center gap-1"
+                    >
+                        <Trash2 className="w-3.5 h-3.5" /> Remove
+                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setEditName(sectionKey);
+                                setEditValue(value);
+                                setIsEditing(false);
+                            }}
+                            className="px-2.5 py-1 text-xs font-medium text-gray-500 hover:text-gray-700"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleSave}
+                            disabled={!editName.trim() || !editValue.trim()}
+                            className="px-3 py-1 text-xs font-semibold text-white bg-rose-500 hover:bg-rose-600 rounded-lg transition-colors shadow-sm disabled:opacity-50"
+                        >
+                            Done
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div
+            onClick={() => setIsEditing(true)}
+            className="cursor-pointer py-1 w-full overflow-hidden"
+        >
+            <h4 className="text-xs font-bold text-gray-800 mb-1">{sectionKey}</h4>
+            <p className="text-xs text-gray-600 font-normal leading-relaxed whitespace-pre-wrap break-words">
+                {value}
+            </p>
+        </div>
+    );
+}
+
 export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSidebarProps) {
     const [draftTodo, setDraftTodo] = useState<Partial<Todo>>(() => todo ? {
         title: todo.title,
@@ -378,6 +480,9 @@ export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSide
     } : {});
     const [isSaving, setIsSaving] = useState(false);
     const [availableTags, setAvailableTags] = useState<string[]>([]);
+    const [isAddingSection, setIsAddingSection] = useState(false);
+    const [newSectionName, setNewSectionName] = useState('');
+    const [newSectionDescription, setNewSectionDescription] = useState('');
 
     useEffect(() => {
         if (todo) {
@@ -390,8 +495,11 @@ export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSide
                 tags: todo.tags || [],
                 customSections: todo.customSections || {}
             });
+            setIsAddingSection(false);
+            setNewSectionName('');
+            setNewSectionDescription('');
         }
-    }, [todo]);
+    }, [todo?.id]);
 
     // Load project tags and all user tags from API
     useEffect(() => {
@@ -509,17 +617,55 @@ export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSide
         }));
     };
 
-    const addSection = () => {
-        const name = prompt("Enter new section name:");
-        if (name && name.trim()) {
-            handleSectionChange(name.trim(), "");
+    const handleSaveNewSection = async () => {
+        const name = newSectionName.trim();
+        const desc = newSectionDescription.trim();
+        if (!name || !desc) return;
+
+        const updatedSections = {
+            ...(draftTodo.customSections as Record<string, string> || {}),
+            [name]: desc
+        };
+
+        setDraftTodo(prev => ({
+            ...prev,
+            customSections: updatedSections
+        }));
+
+        setIsAddingSection(false);
+        setNewSectionName('');
+        setNewSectionDescription('');
+
+        try {
+            await onSave({ customSections: updatedSections });
+        } catch (error) {
+            console.error('Failed to save section', error);
         }
     };
 
-    const removeSection = (key: string) => {
+    const removeSection = async (key: string) => {
         const sections = { ...(draftTodo.customSections as Record<string, string> || {}) };
         delete sections[key];
         setDraftTodo(prev => ({ ...prev, customSections: sections }));
+        try {
+            await onSave({ customSections: sections });
+        } catch (error) {
+            console.error('Failed to remove section', error);
+        }
+    };
+
+    const handleUpdateSection = async (oldKey: string, newKey: string, newValue: string) => {
+        const sections = { ...(draftTodo.customSections as Record<string, string> || {}) };
+        if (oldKey !== newKey) {
+            delete sections[oldKey];
+        }
+        sections[newKey] = newValue;
+        setDraftTodo(prev => ({ ...prev, customSections: sections }));
+        try {
+            await onSave({ customSections: sections });
+        } catch (error) {
+            console.error('Failed to update section', error);
+        }
     };
 
     return (
@@ -652,45 +798,88 @@ export default function TaskSidebar({ todo, project, onClose, onSave }: TaskSide
                 </div>
 
                 {/* 4. Custom Sections */}
-                <div className="pt-1">
-                    <div className="flex items-center justify-between mb-3 pl-0.5">
-                        <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Custom Sections</h3>
-                        <button 
-                            onClick={addSection}
-                            className="flex items-center gap-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 px-2 py-1 rounded-lg transition-colors"
-                        >
-                            <Plus className="w-3.5 h-3.5" /> Add Section
-                        </button>
-                    </div>
+                <div className="pt-1 space-y-4">
+                    {/* Dashed Add Section Area / New Section Form (POSITIONS AT TOP ABOVE SECTIONS) */}
+                    {isAddingSection ? (
+                        <div className="p-3.5 bg-gray-50/60 rounded-xl border border-gray-200 space-y-3">
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                    Section Name
+                                </label>
+                                <input
+                                    type="text"
+                                    value={newSectionName}
+                                    onChange={(e) => setNewSectionName(e.target.value)}
+                                    placeholder="e.g. Hook, Key Takeaways..."
+                                    className="w-full text-xs text-gray-800 bg-white border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-50 transition-all placeholder-gray-400"
+                                    autoFocus
+                                />
+                            </div>
 
-                    {Object.keys(draftTodo.customSections as Record<string, string> || {}).length === 0 ? (
-                        <div className="p-4 border border-dashed border-gray-200 rounded-xl text-center text-xs text-gray-400">
-                            No custom sections added yet
+                            <div>
+                                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                    Section Description
+                                </label>
+                                <textarea
+                                    value={newSectionDescription}
+                                    onChange={(e) => setNewSectionDescription(e.target.value)}
+                                    placeholder="Enter section description..."
+                                    rows={4}
+                                    className="w-full max-h-[110px] text-xs text-gray-800 bg-white border border-gray-200 rounded-lg p-2.5 outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-50 transition-all resize-none overflow-y-auto placeholder-gray-400"
+                                />
+                            </div>
+
+                            <div className="flex items-center justify-end gap-2 pt-1">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setIsAddingSection(false);
+                                        setNewSectionName('');
+                                        setNewSectionDescription('');
+                                    }}
+                                    className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleSaveNewSection}
+                                    disabled={!newSectionName.trim() || !newSectionDescription.trim()}
+                                    className={`px-3.5 py-1.5 text-xs font-semibold text-white rounded-lg transition-all ${
+                                        newSectionName.trim() && newSectionDescription.trim()
+                                            ? 'bg-rose-500 hover:bg-rose-600 shadow-sm'
+                                            : 'bg-rose-300 cursor-not-allowed opacity-60'
+                                    }`}
+                                >
+                                    Save
+                                </button>
+                            </div>
                         </div>
                     ) : (
-                        <div className="space-y-4">
-                            {Object.entries(draftTodo.customSections as Record<string, string> || {}).map(([key, value]) => (
-                                <div key={key} className="group relative bg-gray-50/40 p-3 rounded-xl border border-gray-100">
-                                    <div className="flex items-center justify-between mb-1.5">
-                                        <h4 className="text-xs font-bold text-gray-700">{key}</h4>
-                                        <button 
-                                            onClick={() => removeSection(key)}
-                                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-rose-500 transition-opacity p-1 bg-white rounded-md hover:bg-rose-50"
-                                            title="Remove section"
-                                        >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
-                                    </div>
-                                    <textarea
-                                        value={value}
-                                        onChange={(e) => handleSectionChange(key, e.target.value)}
-                                        className="w-full min-h-[70px] text-xs text-gray-700 bg-white border border-gray-200 rounded-lg p-2.5 outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-50 transition-all resize-y placeholder-gray-400"
-                                        placeholder={`Write your ${key}...`}
-                                    />
-                                </div>
-                            ))}
-                        </div>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setIsAddingSection(true);
+                                setNewSectionName('');
+                                setNewSectionDescription('');
+                            }}
+                            className="w-full p-3.5 border-2 border-dashed border-gray-200 hover:border-rose-300 hover:bg-rose-50/30 rounded-xl text-center text-xs font-semibold text-gray-500 hover:text-rose-600 transition-all flex items-center justify-center gap-2 cursor-pointer group"
+                        >
+                            <Plus className="w-4 h-4 text-gray-400 group-hover:text-rose-600 transition-colors" />
+                            <span>Add Section</span>
+                        </button>
                     )}
+
+                    {/* Added Custom Sections (DISPLAYED BELOW THE ADD SECTION AREA) */}
+                    {Object.entries(draftTodo.customSections as Record<string, string> || {}).map(([key, value]) => (
+                        <CustomSectionItem
+                            key={key}
+                            sectionKey={key}
+                            value={value}
+                            onChange={handleUpdateSection}
+                            onRemove={removeSection}
+                        />
+                    ))}
                 </div>
 
                 <div className="h-4"></div>

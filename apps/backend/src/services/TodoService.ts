@@ -61,6 +61,7 @@ export class TodoService {
                 priority: data.priority || null,
                 dueDate: data.dueDate ? new Date(data.dueDate) : null,
                 tags: data.tags || [],
+                customSections: (data.customSections as any) ?? undefined,
                 order,
                 isCompleted: false,
             },
@@ -202,6 +203,7 @@ export class TodoService {
                 priority: data.priority,
                 dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
                 tags: data.tags !== undefined ? data.tags : undefined,
+                customSections: data.customSections !== undefined ? data.customSections : undefined,
                 order: targetOrder !== undefined ? targetOrder : undefined,
             },
         });
@@ -371,6 +373,7 @@ export class TodoService {
             priority: todo.priority,
             dueDate: todo.dueDate ? todo.dueDate.toISOString() : null,
             tags: todo.tags || [],
+            customSections: todo.customSections || null,
             order: todo.order,
             createdAt: todo.createdAt.toISOString(),
             updatedAt: todo.updatedAt.toISOString(),
